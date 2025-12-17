@@ -1,15 +1,36 @@
 # ============================================================================
-# Cloud Build Configuration for pgAdmin Django API
+# Cloud Build Configuration - Simple & Reliable
 # ============================================================================
-# This file is used by Google Cloud Build to:
-# 1. Build the Django app using Python Buildpacks (NO DOCKERFILE needed)
-# 2. Deploy to Cloud Run
-# 3. Run database migrations
+# Uses Google Cloud Buildpacks to build Docker image from source
+# Then deploys to Cloud Run
 # ============================================================================
 
 steps:
   # ========================================================================
-  # Step 1: Build and Deploy to Cloud Run using Buildpacks
+  # Step 1: Build Docker image using Cloud Buildpacks
+  # ========================================================================
+  - name: 'gcr.io/cloud-builders/pack'
+    id: 'build-image'
+    args:
+      - 'build'
+      - 'gcr.io/$PROJECT_ID/pgadmin-api:$SHORT_SHA'
+      - '--builder=gcr.io/buildpacks/builder:v1'
+      - '--path=.'
+    env:
+      - 'DOCKER_BUILDKIT=1'
+
+  # ========================================================================
+  # Step 2: Tag image as latest
+  # ========================================================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'tag-image'
+    args:
+      - 'tag'
+      - 'gcr.io/$PROJECT_ID/pgadmin-api:$SHORT_SHA'
+      - 'gcr.io/$PROJECT_ID/pgadmin-api:latest'
+
+  # ========================================================================
+  # Step 3: Deploy to Cloud Run
   # ========================================================================
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'deploy-to-cloud-run'
@@ -17,7 +38,7 @@ steps:
       - 'run'
       - 'deploy'
       - 'pgadmin-api'
-      - '--source=.'
+      - '--image=gcr.io/$PROJECT_ID/pgadmin-api:latest'
       - '--platform=managed'
       - '--region=us-central1'
       - '--allow-unauthenticated'
@@ -35,7 +56,7 @@ steps:
       - '--set-secrets=DATABASE_HOST=database-host:latest'
 
   # ========================================================================
-  # Step 2: Run Database Migrations
+  # Step 4: Run Database Migrations (optional, allowed to fail)
   # ========================================================================
   - name: 'gcr.io/cloud-builders/gcloud'
     id: 'run-migrations'
@@ -43,8 +64,8 @@ steps:
       - 'run'
       - 'jobs'
       - 'create'
-      - 'pgadmin-migrate-${BUILD_ID}'
-      - '--image=gcr.io/${PROJECT_ID}/pgadmin-api:latest'
+      - 'pgadmin-migrate-$BUILD_ID'
+      - '--image=gcr.io/$PROJECT_ID/pgadmin-api:latest'
       - '--region=us-central1'
       - '--tasks=1'
       - '--set-env-vars=ENVIRONMENT=production'
@@ -55,22 +76,23 @@ steps:
       - '--set-secrets=SECRET_KEY=django-secret-key:latest'
       - '--set-secrets=DATABASE_HOST=database-host:latest'
       - '--execute-now'
-      - '--wait'
     allowFailure: true
 
 # ============================================================================
-# Build Options - Fix for Service Account Logging Issue
+# Build Options
 # ============================================================================
 options:
-  # Use regional bucket for logs (fixes service account issue)
-  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
-  # Or use logging only (simpler alternative)
   logging: CLOUD_LOGGING_ONLY
   machineType: 'N1_HIGHCPU_8'
 
 # ============================================================================
-# Images to Push to Container Registry
+# Push images to Container Registry
 # ============================================================================
 images:
-  - 'gcr.io/${PROJECT_ID}/pgadmin-api:latest'
-  - 'gcr.io/${PROJECT_ID}/pgadmin-api:${SHORT_SHA}'
+  - 'gcr.io/$PROJECT_ID/pgadmin-api:latest'
+  - 'gcr.io/$PROJECT_ID/pgadmin-api:$SHORT_SHA'
+
+# ============================================================================
+# Build timeout
+# ============================================================================
+timeout: '3600s'
