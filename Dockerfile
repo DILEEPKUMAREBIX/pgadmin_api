@@ -28,5 +28,5 @@ EXPOSE 8000
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
 
-# Run gunicorn
-CMD exec gunicorn pgadmin_config.wsgi:application --bind 0.0.0.0:$PORT --workers 4 --threads 2 --timeout 60 --log-level info
+# Run gunicorn with memory-efficient settings
+CMD exec gunicorn pgadmin_config.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 1 --worker-class sync --timeout 60 --log-level info --max-requests 1000
