@@ -32,6 +32,12 @@ DATABASES = {
         'PASSWORD': config('DATABASE_PASSWORD', default=''),
         'HOST': config('DATABASE_HOST', default='localhost'),
         'PORT': config('DATABASE_PORT', default='5432'),
+        # Connection pooling settings
+        'CONN_MAX_AGE': 60,  # Reuse connections for 60 seconds
+        'OPTIONS': {
+            'connect_timeout': 10,
+            'options': '-c statement_timeout=30000',  # 30 second statement timeout
+        }
     }
 }
 

@@ -28,5 +28,5 @@ EXPOSE 8000
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
 
-# Run gunicorn with minimal worker settings for stability
-CMD exec gunicorn pgadmin_config.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 1 --worker-class sync --timeout 120 --log-level debug --max-requests 100
+# Run gunicorn with optimized settings for free tier
+CMD exec gunicorn pgadmin_config.wsgi:application --bind 0.0.0.0:$PORT --workers 1 --threads 1 --worker-class sync --timeout 120 --log-level info --access-logfile - --keep-alive 5
