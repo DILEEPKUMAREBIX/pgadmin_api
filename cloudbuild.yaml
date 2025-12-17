@@ -55,8 +55,7 @@ steps:
       - '--set-secrets=DATABASE_HOST=database-host:latest'
       - '--execute-now'
       - '--wait'
-    onFailure:
-      - 'ALLOW'  # Continue even if migrations fail
+    allowFailure: true
 
 # ============================================================================
 # Build Options - Fix for Service Account Logging Issue
