@@ -1,0 +1,39 @@
+# cloudbuild.yaml
+steps:
+  # Step 1: Build image using buildpacks (NO DOCKERFILE NEEDED!)
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    id: 'build-image'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'pgadmin-api'
+      - '--source'
+      - '.'
+      - '--platform'
+      - 'managed'
+      - '--region'
+      - 'us-central1'
+      - '--runtime'
+      - 'python311'
+      - '--entry-point'
+      - 'gunicorn'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=ENVIRONMENT=production,DEBUG=False'
+      - '--set-env-vars=DATABASE_NAME=pgadmin_production'
+      - '--set-env-vars=DATABASE_USER=pgadmin_user'
+      - '--update-secrets=DATABASE_PASSWORD=db-password:latest,SECRET_KEY=django-secret-key:latest,DATABASE_HOST=database-host:latest'
+
+  # Step 2: Run migrations
+  - name: 'gcr.io/cloud-builders/gke-deploy'
+    id: 'run-migrations'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud run jobs create run-migrations-$BUILD_ID \
+          --image gcr.io/$PROJECT_ID/pgadmin-api \
+          --region us-central1 \
+          --execute-now \
+          --tasks 1 \
+          --command python manage.py migrate || true
