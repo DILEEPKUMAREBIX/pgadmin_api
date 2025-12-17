@@ -18,8 +18,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Collect static files
-RUN python manage.py collectstatic --noinput || true
+# Create staticfiles directory
+RUN mkdir -p /app/staticfiles
+
+# Collect static files (if database fails, continue anyway)
+RUN ENVIRONMENT=development python manage.py collectstatic --noinput --clear 2>/dev/null || true
 
 # Expose port
 EXPOSE 8000
