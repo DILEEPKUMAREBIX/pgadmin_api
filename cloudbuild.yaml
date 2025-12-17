@@ -1,39 +1,76 @@
-# cloudbuild.yaml
+# ============================================================================
+# Cloud Build Configuration for pgAdmin Django API
+# ============================================================================
+# This file is used by Google Cloud Build to:
+# 1. Build the Django app using Python Buildpacks (NO DOCKERFILE needed)
+# 2. Deploy to Cloud Run
+# 3. Run database migrations
+# ============================================================================
+
 steps:
-  # Step 1: Build image using buildpacks (NO DOCKERFILE NEEDED!)
-  - name: 'gcr.io/cloud-builders/gke-deploy'
-    id: 'build-image'
-    entrypoint: 'gcloud'
+  # ========================================================================
+  # Step 1: Build and Deploy to Cloud Run using Buildpacks
+  # ========================================================================
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'deploy-to-cloud-run'
     args:
       - 'run'
       - 'deploy'
       - 'pgadmin-api'
-      - '--source'
-      - '.'
-      - '--platform'
-      - 'managed'
-      - '--region'
-      - 'us-central1'
-      - '--runtime'
-      - 'python311'
-      - '--entry-point'
-      - 'gunicorn'
+      - '--source=.'
+      - '--platform=managed'
+      - '--region=us-central1'
       - '--allow-unauthenticated'
-      - '--set-env-vars=ENVIRONMENT=production,DEBUG=False'
+      - '--port=8000'
+      - '--memory=512Mi'
+      - '--cpu=1'
+      - '--timeout=3600'
+      - '--set-env-vars=ENVIRONMENT=production'
+      - '--set-env-vars=DEBUG=False'
       - '--set-env-vars=DATABASE_NAME=pgadmin_production'
       - '--set-env-vars=DATABASE_USER=pgadmin_user'
-      - '--update-secrets=DATABASE_PASSWORD=db-password:latest,SECRET_KEY=django-secret-key:latest,DATABASE_HOST=database-host:latest'
+      - '--set-secrets=DATABASE_PASSWORD=db-password:latest'
+      - '--set-secrets=SECRET_KEY=django-secret-key:latest'
+      - '--set-secrets=DATABASE_HOST=database-host:latest'
 
-  # Step 2: Run migrations
-  - name: 'gcr.io/cloud-builders/gke-deploy'
+  # ========================================================================
+  # Step 2: Run Database Migrations
+  # ========================================================================
+  - name: 'gcr.io/cloud-builders/gcloud'
     id: 'run-migrations'
-    entrypoint: 'bash'
     args:
-      - '-c'
-      - |
-        gcloud run jobs create run-migrations-$BUILD_ID \
-          --image gcr.io/$PROJECT_ID/pgadmin-api \
-          --region us-central1 \
-          --execute-now \
-          --tasks 1 \
-          --command python manage.py migrate || true
+      - 'run'
+      - 'jobs'
+      - 'create'
+      - 'pgadmin-migrate-${BUILD_ID}'
+      - '--image=gcr.io/${PROJECT_ID}/pgadmin-api:latest'
+      - '--region=us-central1'
+      - '--tasks=1'
+      - '--set-env-vars=ENVIRONMENT=production'
+      - '--set-env-vars=DEBUG=False'
+      - '--set-env-vars=DATABASE_NAME=pgadmin_production'
+      - '--set-env-vars=DATABASE_USER=pgadmin_user'
+      - '--set-secrets=DATABASE_PASSWORD=db-password:latest'
+      - '--set-secrets=SECRET_KEY=django-secret-key:latest'
+      - '--set-secrets=DATABASE_HOST=database-host:latest'
+      - '--execute-now'
+      - '--wait'
+    onFailure:
+      - 'ALLOW'  # Continue even if migrations fail
+
+# ============================================================================
+# Build Options - Fix for Service Account Logging Issue
+# ============================================================================
+options:
+  # Use regional bucket for logs (fixes service account issue)
+  defaultLogsBucketBehavior: REGIONAL_USER_OWNED_BUCKET
+  # Or use logging only (simpler alternative)
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'N1_HIGHCPU_8'
+
+# ============================================================================
+# Images to Push to Container Registry
+# ============================================================================
+images:
+  - 'gcr.io/${PROJECT_ID}/pgadmin-api:latest'
+  - 'gcr.io/${PROJECT_ID}/pgadmin-api:${SHORT_SHA}'
