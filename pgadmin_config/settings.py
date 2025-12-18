@@ -164,7 +164,8 @@ CORS_ALLOWED_ORIGINS = config(
 # SECURITY (Production)
 # ============================================================================
 if ENVIRONMENT == 'production':
-    SECURE_SSL_REDIRECT = True
+    # Cloud Run terminates TLS at the edge; avoid redirect loops
+    SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_HSTS_SECONDS = 31536000
