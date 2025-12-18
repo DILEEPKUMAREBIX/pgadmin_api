@@ -53,7 +53,7 @@ steps:
       - '--set-env-vars=DATABASE_USER=pgadmin_user'
       - '--set-secrets=DATABASE_PASSWORD=db-password:latest'
       - '--set-secrets=SECRET_KEY=django-secret-key:latest'
-      - '--set-env-vars=DATABASE_HOST=/cloudsql/pgadmin-481518:us-central1:pgadmin-db'
+      - '--set-env-vars=DATABASE_SOCKET=/cloudsql/pgadmin-481518:us-central1:pgadmin-db'
 
   # ========================================================================
   # Step 4: Run Database Migrations (optional, allowed to fail)
@@ -76,7 +76,7 @@ steps:
       - '--set-env-vars=DATABASE_USER=pgadmin_user'
       - '--set-secrets=DATABASE_PASSWORD=db-password:latest'
       - '--set-secrets=SECRET_KEY=django-secret-key:latest'
-      - '--set-env-vars=DATABASE_HOST=/cloudsql/pgadmin-481518:us-central1:pgadmin-db'
+      - '--set-env-vars=DATABASE_SOCKET=/cloudsql/pgadmin-481518:us-central1:pgadmin-db'
       - '--execute-now'
     allowFailure: true
 

@@ -123,19 +123,23 @@ SPECTACULAR_SETTINGS = {
 # ============================================================================
 # DATABASE
 # ============================================================================
+_db_host = config('DATABASE_SOCKET', default=None)
+if not _db_host:
+    _db_host = config('DATABASE_HOST', default='localhost')
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': config('DATABASE_NAME', default='pgadmin_db'),
         'USER': config('DATABASE_USER', default='postgres'),
         'PASSWORD': config('DATABASE_PASSWORD', default=''),
-        'HOST': config('DATABASE_HOST', default='localhost'),
+        'HOST': _db_host,
         'PORT': config('DATABASE_PORT', default='5432'),
         # Connection pooling settings
-        'CONN_MAX_AGE': 60,  # Reuse connections for 60 seconds
+        'CONN_MAX_AGE': 60,
         'OPTIONS': {
             'connect_timeout': 10,
-            'options': '-c statement_timeout=30000',  # 30 second statement timeout
+            'options': '-c statement_timeout=30000',
         }
     }
 }
