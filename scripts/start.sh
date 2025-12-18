@@ -1,5 +1,11 @@
 #!/bin/sh
 
+try_db() {
+  echo "[startup] Checking database connectivity..."
+  python manage.py checkdb && return 0
+  return 1
+}
+
 # Retry migrations to avoid startup failures if DB isn’t ready yet
 try_migrate() {
   echo "[startup] Running migrations..."
@@ -11,11 +17,11 @@ retries=10
 delay=5
 count=1
 while [ $count -le $retries ]; do
-  if try_migrate; then
+  if try_db && try_migrate; then
     echo "[startup] Migrations completed."
     break
   fi
-  echo "[startup] Migrations failed (attempt $count/$retries). Retrying in ${delay}s..."
+  echo "[startup] DB/migrations not ready (attempt $count/$retries). Retrying in ${delay}s..."
   sleep $delay
   count=$((count+1))
 done
