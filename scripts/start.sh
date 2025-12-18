@@ -1,10 +1,26 @@
 #!/bin/sh
-set -e
 
-# Run database migrations (idempotent)
-python manage.py migrate --noinput
+# Retry migrations to avoid startup failures if DB isn’t ready yet
+try_migrate() {
+  echo "[startup] Running migrations..."
+  python manage.py migrate --noinput && return 0
+  return 1
+}
 
-# Collect static files (do not fail the container if this errors)
+retries=10
+delay=5
+count=1
+while [ $count -le $retries ]; do
+  if try_migrate; then
+    echo "[startup] Migrations completed."
+    break
+  fi
+  echo "[startup] Migrations failed (attempt $count/$retries). Retrying in ${delay}s..."
+  sleep $delay
+  count=$((count+1))
+done
+
+# Collect static files (non-fatal)
 python manage.py collectstatic --noinput || true
 
 # Start gunicorn
