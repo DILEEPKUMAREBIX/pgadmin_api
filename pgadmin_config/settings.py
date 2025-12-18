@@ -15,9 +15,13 @@ DEBUG = config('DEBUG', default=False, cast=bool)
 
 # For production on Cloud Run
 if ENVIRONMENT == 'production':
-    ALLOWED_HOSTS = ['pgadmin-api-*.run.app', 'localhost']
+    # Allow Cloud Run default domains (regional) and localhost
+    ALLOWED_HOSTS = ['.run.app', 'localhost', '127.0.0.1']
 else:
-    ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost', cast=Csv())
+    ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
+
+# CSRF trusted origins (required for Django 4+ when behind HTTPS)
+CSRF_TRUSTED_ORIGINS = ['https://*.run.app']
 
 SECRET_KEY = config('SECRET_KEY', default='dev-key-not-secure')
 
