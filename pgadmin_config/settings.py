@@ -194,9 +194,8 @@ LOGGING = {
     },
 }
 
-# Middleware (add whitenoise)
-MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',  # Add this
-    # ... rest of middleware
-]
+# Note: MIDDLEWARE is already defined above with the full stack including
+# SecurityMiddleware, WhiteNoiseMiddleware, SessionMiddleware, CorsMiddleware,
+# CommonMiddleware, CsrfViewMiddleware, AuthenticationMiddleware, MessageMiddleware,
+# and XFrameOptionsMiddleware. Avoid redefining MIDDLEWARE below to prevent
+# dropping required entries for admin, sessions, and messages.

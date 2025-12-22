@@ -103,13 +103,14 @@ class Command(BaseCommand):
             property=prop1,
             mobile='9876543210',
             defaults={
-                'name': 'Rajesh Kumar',
+                'first_name': 'Rajesh',
+                'last_name': 'Kumar',
                 'gender': 'M',
                 'email': 'rajesh@example.com',
                 'rent': 5000,
                 'rent_type': 'monthly',
                 'joining_date': today - timedelta(days=30),
-                'next_pay_date': today + timedelta(days=10),
+                'preferred_billing_day': 10,
                 'current_floor': floor1,
                 'current_room': room1,
                 'current_bed': bed1,
@@ -120,13 +121,14 @@ class Command(BaseCommand):
             property=prop1,
             mobile='9123456789',
             defaults={
-                'name': 'Priya Singh',
+                'first_name': 'Priya',
+                'last_name': 'Singh',
                 'gender': 'F',
                 'email': 'priya@example.com',
                 'rent': 4500,
                 'rent_type': 'monthly',
                 'joining_date': today - timedelta(days=60),
-                'next_pay_date': today - timedelta(days=5),
+                'preferred_billing_day': 25,
                 'current_floor': floor1,
                 'current_room': room1,
                 'current_bed': bed2,
@@ -187,7 +189,7 @@ class Command(BaseCommand):
         Payment.objects.get_or_create(
             property=prop1,
             resident=resident1,
-            resident_name=resident1.name,
+            resident_name=str(resident1),
             defaults={
                 'amount': 5000,
                 'payment_method': 'bank_transfer',
@@ -198,7 +200,7 @@ class Command(BaseCommand):
         Payment.objects.get_or_create(
             property=prop1,
             resident=resident2,
-            resident_name=resident2.name,
+            resident_name=str(resident2),
             defaults={
                 'amount': 4500,
                 'payment_method': 'upi',

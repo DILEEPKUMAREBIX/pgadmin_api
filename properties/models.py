@@ -1,4 +1,6 @@
 from django.db import models
+from django.core.validators import MinValueValidator, MaxValueValidator
+import builtins
 
 # ============================================================================
 # PROPERTIES
@@ -134,7 +136,8 @@ class Resident(models.Model):
     ]
 
     property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='residents')
-    name = models.CharField(max_length=255)
+    first_name = models.CharField(max_length=150)
+    last_name = models.CharField(max_length=150, null=True, blank=True)
     gender = models.CharField(max_length=20, null=True, blank=True)
     email = models.EmailField(null=True, blank=True)
     mobile = models.CharField(max_length=20)
@@ -144,8 +147,12 @@ class Resident(models.Model):
     rent_type = models.CharField(max_length=20, choices=RENT_TYPE_CHOICES, default='monthly')
     joining_date = models.DateField()
     move_out_date = models.DateField(null=True, blank=True)
-    next_pay_date = models.DateField()
-    payment_cycle_start = models.DateField(null=True, blank=True)
+    preferred_billing_day = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(31)],
+        null=True,
+        blank=True,
+        help_text='Preferred day of month for billing (1-31)'
+    )
     photo_url = models.URLField(null=True, blank=True)
     aadhar_url = models.URLField(null=True, blank=True)
     current_floor = models.ForeignKey(Floor, on_delete=models.SET_NULL, null=True, blank=True, related_name='current_residents_floor')
@@ -163,13 +170,19 @@ class Resident(models.Model):
         indexes = [
             models.Index(fields=['property']),
             models.Index(fields=['mobile']),
-            models.Index(fields=['next_pay_date']),
+            models.Index(fields=['preferred_billing_day']),
             models.Index(fields=['is_active']),
             models.Index(fields=['-created_at']),
         ]
 
     def __str__(self):
-        return self.name
+        full_name = f"{self.first_name} {self.last_name}" if self.last_name else self.first_name
+        return full_name
+
+    @builtins.property
+    def name(self):
+        """Backward-compatible accessor for full name."""
+        return str(self)
 
 
 # ============================================================================
