@@ -66,10 +66,14 @@ class BedSerializer(serializers.ModelSerializer):
 
 class ResidentSerializer(serializers.ModelSerializer):
     property_name = serializers.CharField(source='property.name', read_only=True)
-    current_floor_number = serializers.IntegerField(source='current_floor.floor_level', read_only=True)
-    current_room_number = serializers.CharField(source='current_room.room_number', read_only=True)
-    current_bed_number = serializers.CharField(source='current_bed.bed_number', read_only=True)
     name = serializers.CharField(read_only=True)
+    # Derive current location from active Occupancy to avoid model field coupling
+    current_floor = serializers.SerializerMethodField()
+    current_floor_number = serializers.SerializerMethodField()
+    current_room = serializers.SerializerMethodField()
+    current_room_number = serializers.SerializerMethodField()
+    current_bed = serializers.SerializerMethodField()
+    current_bed_number = serializers.SerializerMethodField()
 
     class Meta:
         model = Resident
@@ -82,6 +86,33 @@ class ResidentSerializer(serializers.ModelSerializer):
             'notes', 'override_comment', 'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'name']
+
+    def _get_active_occupancy(self, obj):
+        return Occupancy.objects.select_related('floor', 'room', 'bed').filter(resident=obj, is_occupied=True).first()
+
+    def get_current_floor(self, obj):
+        occ = self._get_active_occupancy(obj)
+        return occ.floor.id if occ and occ.floor else None
+
+    def get_current_floor_number(self, obj):
+        occ = self._get_active_occupancy(obj)
+        return occ.floor.floor_level if occ and occ.floor else None
+
+    def get_current_room(self, obj):
+        occ = self._get_active_occupancy(obj)
+        return occ.room.id if occ and occ.room else None
+
+    def get_current_room_number(self, obj):
+        occ = self._get_active_occupancy(obj)
+        return occ.room.room_number if occ and occ.room else None
+
+    def get_current_bed(self, obj):
+        occ = self._get_active_occupancy(obj)
+        return occ.bed.id if occ and occ.bed else None
+
+    def get_current_bed_number(self, obj):
+        occ = self._get_active_occupancy(obj)
+        return occ.bed.bed_number if occ and occ.bed else None
 
 
 class OccupancySerializer(serializers.ModelSerializer):

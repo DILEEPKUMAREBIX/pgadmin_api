@@ -257,24 +257,41 @@ occupancy4 = Occupancy.objects.create(
 print(f"   ✓ {resident4.name} → Room {rooms[15].room_number}, Bed {beds[15].bed_number}")
 
 # Update residents with current location info
-resident1.current_floor = floor1_p1
-resident1.current_room = rooms[0]
-resident1.current_bed = beds[0]
+# Current location derived from Occupancy; create occupancy instead
+Occupancy.objects.update_or_create(
+    property=property1,
+    floor=floor1_p1,
+    room=rooms[0],
+    bed=beds[0],
+    defaults={'resident': resident1, 'is_occupied': True, 'occupied_since': today - timedelta(days=15)}
+)
 resident1.save()
 
-resident2.current_floor = floor1_p1
-resident2.current_room = rooms[2]
-resident2.current_bed = beds[4]
+Occupancy.objects.update_or_create(
+    property=property1,
+    floor=floor1_p1,
+    room=rooms[2],
+    bed=beds[4],
+    defaults={'resident': resident2, 'is_occupied': True, 'occupied_since': today - timedelta(days=10)}
+)
 resident2.save()
 
-resident3.current_floor = floor1_p2
-resident3.current_room = rooms[12]
-resident3.current_bed = beds[12]
+Occupancy.objects.update_or_create(
+    property=property2,
+    floor=floor1_p2,
+    room=rooms[12],
+    bed=beds[12],
+    defaults={'resident': resident3, 'is_occupied': True, 'occupied_since': today - timedelta(days=20)}
+)
 resident3.save()
 
-resident4.current_floor = floor2_p2
-resident4.current_room = rooms[15]
-resident4.current_bed = beds[15]
+Occupancy.objects.update_or_create(
+    property=property2,
+    floor=floor2_p2,
+    room=rooms[15],
+    bed=beds[15],
+    defaults={'resident': resident4, 'is_occupied': True, 'occupied_since': today - timedelta(days=5)}
+)
 resident4.save()
 
 # ============================================================================

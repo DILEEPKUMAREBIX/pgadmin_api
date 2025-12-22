@@ -111,10 +111,15 @@ class Command(BaseCommand):
                 'rent_type': 'monthly',
                 'joining_date': today - timedelta(days=30),
                 'preferred_billing_day': 10,
-                'current_floor': floor1,
-                'current_room': room1,
-                'current_bed': bed1,
             }
+        )
+        # Ensure occupancy
+        Occupancy.objects.update_or_create(
+            property=prop1,
+            floor=floor1,
+            room=room1,
+            bed=bed1,
+            defaults={'resident': resident1, 'is_occupied': True, 'occupied_since': today - timedelta(days=30)}
         )
 
         resident2, _ = Resident.objects.get_or_create(
@@ -129,10 +134,14 @@ class Command(BaseCommand):
                 'rent_type': 'monthly',
                 'joining_date': today - timedelta(days=60),
                 'preferred_billing_day': 25,
-                'current_floor': floor1,
-                'current_room': room1,
-                'current_bed': bed2,
             }
+        )
+        Occupancy.objects.update_or_create(
+            property=prop1,
+            floor=floor1,
+            room=room1,
+            bed=bed2,
+            defaults={'resident': resident2, 'is_occupied': True, 'occupied_since': today - timedelta(days=60)}
         )
 
         # Create Occupancy records

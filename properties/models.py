@@ -155,9 +155,7 @@ class Resident(models.Model):
     )
     photo_url = models.URLField(null=True, blank=True)
     aadhar_url = models.URLField(null=True, blank=True)
-    current_floor = models.ForeignKey(Floor, on_delete=models.SET_NULL, null=True, blank=True, related_name='current_residents_floor')
-    current_room = models.ForeignKey(Room, on_delete=models.SET_NULL, null=True, blank=True, related_name='current_residents_room')
-    current_bed = models.ForeignKey(Bed, on_delete=models.SET_NULL, null=True, blank=True, related_name='current_resident')
+    # Current location is derived from Occupancy; not stored on Resident
     notes = models.TextField(null=True, blank=True)
     override_comment = models.TextField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
