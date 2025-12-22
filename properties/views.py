@@ -1,4 +1,5 @@
 from rest_framework import viewsets, filters, status
+from django.db.models import Q
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
@@ -172,7 +173,7 @@ class ResidentViewSet(viewsets.ModelViewSet):
             qs = qs.filter(preferred_billing_day__gte=d0, preferred_billing_day__lte=d7)
         else:
             wrap = d7 - 31
-            qs = qs.filter(models.Q(preferred_billing_day__gte=d0) | models.Q(preferred_billing_day__lte=wrap))
+            qs = qs.filter(Q(preferred_billing_day__gte=d0) | Q(preferred_billing_day__lte=wrap))
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
 

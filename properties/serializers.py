@@ -69,7 +69,7 @@ class ResidentSerializer(serializers.ModelSerializer):
     current_floor_number = serializers.IntegerField(source='current_floor.floor_level', read_only=True)
     current_room_number = serializers.CharField(source='current_room.room_number', read_only=True)
     current_bed_number = serializers.CharField(source='current_bed.bed_number', read_only=True)
-    name = serializers.CharField(source='name', read_only=True)
+    name = serializers.CharField(read_only=True)
 
     class Meta:
         model = Resident
