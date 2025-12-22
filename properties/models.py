@@ -380,7 +380,8 @@ class User(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'pg_user'
+        # Avoid collision with PostgreSQL's built-in view "pg_user"
+        db_table = 'app_user'
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['username']),

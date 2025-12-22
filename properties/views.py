@@ -5,6 +5,9 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
+from rest_framework.permissions import AllowAny
+from django.contrib.auth.hashers import make_password, check_password
+from core.auth import generate_jwt
 from .models import (
     Property, Floor, Room, Bed, Resident, Occupancy, OccupancyHistory,
     Expense, Payment, MaintenanceRequest, User
@@ -323,6 +326,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
     filterset_fields = ['property', 'resident', 'payment_method']
     ordering_fields = ['payment_date', 'amount', 'created_at']
     ordering = ['-payment_date']
+    permission_classes = []
 
     @action(detail=False, methods=['get'])
     def summary(self, request):
@@ -391,6 +395,7 @@ class MaintenanceRequestViewSet(viewsets.ModelViewSet):
     search_fields = ['category', 'description']
     ordering_fields = ['reported_date', 'priority', 'status', 'created_at']
     ordering = ['-reported_date']
+    permission_classes = []
 
     @action(detail=True, methods=['post'])
     def resolve(self, request, pk=None):
@@ -441,3 +446,63 @@ class UserViewSet(viewsets.ModelViewSet):
     search_fields = ['username', 'email']
     ordering_fields = ['username', 'created_at', 'last_login']
     ordering = ['-created_at']
+    permission_classes = []
+
+
+@extend_schema(tags=['Auth'])
+class AuthViewSet(viewsets.ViewSet):
+    """Authentication endpoints: register and login using app_user."""
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        description='Create a new user',
+        parameters=[],
+    )
+    @action(detail=False, methods=['post'], url_path='register')
+    def register(self, request):
+        required = ['username', 'password', 'role']
+        missing = [k for k in required if not request.data.get(k)]
+        if missing:
+            return Response({'detail': f'Missing fields: {", ".join(missing)}'}, status=status.HTTP_400_BAD_REQUEST)
+        username = request.data['username']
+        password = request.data['password']
+        email = request.data.get('email')
+        property_id = request.data.get('property')
+        role = request.data.get('role', 'staff')
+        # Ensure unique username/email
+        if User.objects.filter(username=username).exists():
+            return Response({'detail': 'Username already exists'}, status=status.HTTP_400_BAD_REQUEST)
+        if email and User.objects.filter(email=email).exists():
+            return Response({'detail': 'Email already exists'}, status=status.HTTP_400_BAD_REQUEST)
+        user = User(
+            username=username,
+            email=email,
+            role=role,
+            property_id=property_id,
+            password_hash=make_password(password),
+        )
+        user.save()
+        token = generate_jwt(user)
+        return Response({'token': token, 'user': {'id': user.id, 'username': user.username, 'property': user.property_id, 'role': user.role}}, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        description='Login and obtain JWT token',
+        parameters=[
+            OpenApiParameter(name='username', required=True, type=OpenApiTypes.STR, location='query', description='Username'),
+            OpenApiParameter(name='password', required=True, type=OpenApiTypes.STR, location='query', description='Password'),
+        ]
+    )
+    @action(detail=False, methods=['post'], url_path='login')
+    def login(self, request):
+        username = request.data.get('username') or request.query_params.get('username')
+        password = request.data.get('password') or request.query_params.get('password')
+        if not username or not password:
+            return Response({'detail': 'username and password required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            user = User.objects.get(username=username)
+        except User.DoesNotExist:
+            return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+        if not check_password(password, user.password_hash):
+            return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+        token = generate_jwt(user)
+        return Response({'token': token, 'user': {'id': user.id, 'username': user.username, 'property': user.property_id, 'role': user.role}})
