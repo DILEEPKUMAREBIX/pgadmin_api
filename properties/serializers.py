@@ -67,6 +67,10 @@ class BedSerializer(serializers.ModelSerializer):
 class ResidentSerializer(serializers.ModelSerializer):
     property_name = serializers.CharField(source='property.name', read_only=True)
     name = serializers.CharField(read_only=True)
+    # Write-only inputs for assigning occupancy on create
+    floor_id = serializers.IntegerField(write_only=True, required=False)
+    room_id = serializers.IntegerField(write_only=True, required=False)
+    bed_id = serializers.IntegerField(write_only=True, required=False)
     # Derive current location from active Occupancy to avoid model field coupling
     current_floor = serializers.SerializerMethodField()
     current_floor_number = serializers.SerializerMethodField()
@@ -83,6 +87,7 @@ class ResidentSerializer(serializers.ModelSerializer):
             'joining_date', 'move_out_date', 'preferred_billing_day',
             'photo_url', 'aadhar_url', 'current_floor', 'current_floor_number',
             'current_room', 'current_room_number', 'current_bed', 'current_bed_number',
+            'floor_id', 'room_id', 'bed_id',
             'notes', 'override_comment', 'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'name']
@@ -113,6 +118,61 @@ class ResidentSerializer(serializers.ModelSerializer):
     def get_current_bed_number(self, obj):
         occ = self._get_active_occupancy(obj)
         return occ.bed.bed_number if occ and occ.bed else None
+
+    def validate(self, attrs):
+        # On create, require floor_id, room_id, bed_id; on update, allow missing
+        if self.instance is None:
+            missing = [k for k in ['floor_id', 'room_id', 'bed_id'] if attrs.get(k) in (None, '')]
+            if missing:
+                raise serializers.ValidationError({m: 'This field is required on create.' for m in missing})
+            # Validate existence and relationships
+            try:
+                floor = Floor.objects.get(id=attrs['floor_id'])
+                room = Room.objects.get(id=attrs['room_id'])
+                bed = Bed.objects.get(id=attrs['bed_id'])
+            except (Floor.DoesNotExist, Room.DoesNotExist, Bed.DoesNotExist):
+                raise serializers.ValidationError('Invalid floor_id/room_id/bed_id.')
+            if room.floor_id != floor.id:
+                raise serializers.ValidationError('room_id does not belong to floor_id.')
+            if bed.room_id != room.id:
+                raise serializers.ValidationError('bed_id does not belong to room_id.')
+            # Property consistency (property must match floor/room/bed property)
+            prop = attrs.get('property')
+            if prop:
+                if floor.property_id != prop.id or room.property_id != prop.id or bed.property_id != prop.id:
+                    raise serializers.ValidationError('floor/room/bed must belong to the same property as resident.')
+            # Bed availability
+            occ = Occupancy.objects.filter(bed_id=bed.id).first()
+            if occ and occ.is_occupied:
+                raise serializers.ValidationError('Selected bed is already occupied.')
+        return attrs
+
+    def create(self, validated_data):
+        floor_id = validated_data.pop('floor_id', None)
+        room_id = validated_data.pop('room_id', None)
+        bed_id = validated_data.pop('bed_id', None)
+        resident = super().create(validated_data)
+        # Assign occupancy if IDs provided
+        if floor_id and room_id and bed_id:
+            floor = Floor.objects.get(id=floor_id)
+            room = Room.objects.get(id=room_id)
+            bed = Bed.objects.get(id=bed_id)
+            # Final safety: ensure all belong to resident.property
+            if not (floor.property_id == resident.property_id == room.property_id == bed.property_id):
+                raise serializers.ValidationError('floor/room/bed must belong to resident.property')
+            from django.utils import timezone
+            Occupancy.objects.update_or_create(
+                bed=bed,
+                defaults={
+                    'property': resident.property,
+                    'floor': floor,
+                    'room': room,
+                    'resident': resident,
+                    'is_occupied': True,
+                    'occupied_since': timezone.now().date(),
+                }
+            )
+        return resident
 
 
 class OccupancySerializer(serializers.ModelSerializer):
