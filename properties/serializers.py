@@ -69,18 +69,19 @@ class ResidentSerializer(serializers.ModelSerializer):
     current_floor_number = serializers.IntegerField(source='current_floor.floor_level', read_only=True)
     current_room_number = serializers.CharField(source='current_room.room_number', read_only=True)
     current_bed_number = serializers.CharField(source='current_bed.bed_number', read_only=True)
+    name = serializers.CharField(source='name', read_only=True)
 
     class Meta:
         model = Resident
         fields = [
-            'id', 'property', 'property_name', 'name', 'gender', 'email',
-            'mobile', 'dob', 'address', 'rent', 'rent_type', 'joining_date',
-            'move_out_date', 'next_pay_date', 'payment_cycle_start',
+            'id', 'property', 'property_name', 'first_name', 'last_name', 'name',
+            'gender', 'email', 'mobile', 'dob', 'address', 'rent', 'rent_type',
+            'joining_date', 'move_out_date', 'preferred_billing_day',
             'photo_url', 'aadhar_url', 'current_floor', 'current_floor_number',
             'current_room', 'current_room_number', 'current_bed', 'current_bed_number',
             'notes', 'override_comment', 'is_active', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'name']
 
 
 class OccupancySerializer(serializers.ModelSerializer):

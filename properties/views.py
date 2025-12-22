@@ -154,34 +154,38 @@ class ResidentViewSet(viewsets.ModelViewSet):
     serializer_class = ResidentSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['property', 'is_active', 'rent_type']
-    search_fields = ['name', 'email', 'mobile']
-    ordering_fields = ['name', 'joining_date', 'next_pay_date', 'created_at']
+    search_fields = ['first_name', 'last_name', 'email', 'mobile']
+    ordering_fields = ['first_name', 'last_name', 'joining_date', 'preferred_billing_day', 'created_at']
     ordering = ['-created_at']
 
     @action(detail=False, methods=['get'])
     def due_soon(self, request):
-        """Get residents with payment due soon"""
+        """Get residents with billing day within next 7 days"""
         from django.utils import timezone
-        from datetime import timedelta
         
         today = timezone.now().date()
-        upcoming_due = Resident.objects.filter(
-            is_active=True,
-            next_pay_date__gte=today,
-            next_pay_date__lte=today + timedelta(days=7)
-        )
-        serializer = self.get_serializer(upcoming_due, many=True)
+        d0 = today.day
+        d7 = (d0 + 7)
+
+        qs = Resident.objects.filter(is_active=True, preferred_billing_day__isnull=False)
+        if d7 <= 31:
+            qs = qs.filter(preferred_billing_day__gte=d0, preferred_billing_day__lte=d7)
+        else:
+            wrap = d7 - 31
+            qs = qs.filter(models.Q(preferred_billing_day__gte=d0) | models.Q(preferred_billing_day__lte=wrap))
+        serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
 
     @action(detail=False, methods=['get'])
     def overdue(self, request):
-        """Get residents with overdue payments"""
+        """Get residents with billing day earlier this month"""
         from django.utils import timezone
         
         today = timezone.now().date()
+        d0 = today.day
         overdue_residents = Resident.objects.filter(
             is_active=True,
-            next_pay_date__lt=today
+            preferred_billing_day__lt=d0
         )
         serializer = self.get_serializer(overdue_residents, many=True)
         return Response(serializer.data)
