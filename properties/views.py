@@ -3,7 +3,8 @@ from django.db.models import Q
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
 from .models import (
     Property, Floor, Room, Bed, Resident, Occupancy, OccupancyHistory,
     Expense, Payment, MaintenanceRequest, User
@@ -343,6 +344,18 @@ class PaymentViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=False, methods=['get'])
+    @extend_schema(
+        description="Get payments aggregated for a specific resident",
+        parameters=[
+            OpenApiParameter(
+                name='resident_id',
+                description='Resident ID to aggregate payments for',
+                required=True,
+                type=OpenApiTypes.INT,
+                location='query',
+            ),
+        ],
+    )
     def by_resident(self, request):
         """Get payments by resident"""
         from django.db.models import Sum

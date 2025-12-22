@@ -78,6 +78,8 @@ class ResidentSerializer(serializers.ModelSerializer):
     current_room_number = serializers.SerializerMethodField()
     current_bed = serializers.SerializerMethodField()
     current_bed_number = serializers.SerializerMethodField()
+    # Payments summary for resident
+    payments = serializers.SerializerMethodField()
 
     class Meta:
         model = Resident
@@ -88,6 +90,7 @@ class ResidentSerializer(serializers.ModelSerializer):
             'photo_url', 'aadhar_url', 'current_floor', 'current_floor_number',
             'current_room', 'current_room_number', 'current_bed', 'current_bed_number',
             'floor_id', 'room_id', 'bed_id',
+            'payments',
             'notes', 'override_comment', 'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'name']
@@ -118,6 +121,10 @@ class ResidentSerializer(serializers.ModelSerializer):
     def get_current_bed_number(self, obj):
         occ = self._get_active_occupancy(obj)
         return occ.bed.bed_number if occ and occ.bed else None
+
+    def get_payments(self, obj):
+        qs = Payment.objects.filter(resident=obj).order_by('-payment_date')
+        return PaymentSummarySerializer(qs, many=True).data
 
     def validate(self, attrs):
         # On create, require floor_id, room_id, bed_id; on update, allow missing
@@ -235,6 +242,13 @@ class PaymentSerializer(serializers.ModelSerializer):
             'reference_number', 'notes', 'created_at'
         ]
         read_only_fields = ['id', 'created_at', 'payment_date']
+
+class PaymentSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Payment
+        fields = [
+            'id', 'amount', 'payment_date', 'payment_method', 'reference_number', 'notes'
+        ]
 
 
 class MaintenanceRequestSerializer(serializers.ModelSerializer):
