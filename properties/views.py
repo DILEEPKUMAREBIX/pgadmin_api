@@ -8,6 +8,9 @@ from drf_spectacular.types import OpenApiTypes
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.hashers import make_password, check_password
 from core.auth import generate_jwt
+from .serializers import (
+    AuthRegisterSerializer, AuthLoginSerializer, AuthTokenResponseSerializer, AuthUserMiniSerializer
+)
 from .models import (
     Property, Floor, Room, Bed, Resident, Occupancy, OccupancyHistory,
     Expense, Payment, MaintenanceRequest, User
@@ -456,48 +459,36 @@ class AuthViewSet(viewsets.ViewSet):
 
     @extend_schema(
         description='Create a new user',
-        parameters=[],
+        request=AuthRegisterSerializer,
+        responses={201: AuthTokenResponseSerializer},
     )
     @action(detail=False, methods=['post'], url_path='register')
     def register(self, request):
-        required = ['username', 'password', 'role']
-        missing = [k for k in required if not request.data.get(k)]
-        if missing:
-            return Response({'detail': f'Missing fields: {", ".join(missing)}'}, status=status.HTTP_400_BAD_REQUEST)
-        username = request.data['username']
-        password = request.data['password']
-        email = request.data.get('email')
-        property_id = request.data.get('property')
-        role = request.data.get('role', 'staff')
-        # Ensure unique username/email
-        if User.objects.filter(username=username).exists():
-            return Response({'detail': 'Username already exists'}, status=status.HTTP_400_BAD_REQUEST)
-        if email and User.objects.filter(email=email).exists():
-            return Response({'detail': 'Email already exists'}, status=status.HTTP_400_BAD_REQUEST)
+        ser = AuthRegisterSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
         user = User(
-            username=username,
-            email=email,
-            role=role,
-            property_id=property_id,
-            password_hash=make_password(password),
+            username=data['username'],
+            email=data.get('email'),
+            role=data.get('role') or 'staff',
+            property_id=data.get('property'),
+            password_hash=make_password(data['password']),
         )
         user.save()
         token = generate_jwt(user)
-        return Response({'token': token, 'user': {'id': user.id, 'username': user.username, 'property': user.property_id, 'role': user.role}}, status=status.HTTP_201_CREATED)
+        return Response({'token': token, 'user': AuthUserMiniSerializer(user).data}, status=status.HTTP_201_CREATED)
 
     @extend_schema(
         description='Login and obtain JWT token',
-        parameters=[
-            OpenApiParameter(name='username', required=True, type=OpenApiTypes.STR, location='query', description='Username'),
-            OpenApiParameter(name='password', required=True, type=OpenApiTypes.STR, location='query', description='Password'),
-        ]
+        request=AuthLoginSerializer,
+        responses=AuthTokenResponseSerializer,
     )
     @action(detail=False, methods=['post'], url_path='login')
     def login(self, request):
-        username = request.data.get('username') or request.query_params.get('username')
-        password = request.data.get('password') or request.query_params.get('password')
-        if not username or not password:
-            return Response({'detail': 'username and password required'}, status=status.HTTP_400_BAD_REQUEST)
+        ser = AuthLoginSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        username = ser.validated_data['username']
+        password = ser.validated_data['password']
         try:
             user = User.objects.get(username=username)
         except User.DoesNotExist:
@@ -505,4 +496,4 @@ class AuthViewSet(viewsets.ViewSet):
         if not check_password(password, user.password_hash):
             return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
         token = generate_jwt(user)
-        return Response({'token': token, 'user': {'id': user.id, 'username': user.username, 'property': user.property_id, 'role': user.role}})
+        return Response({'token': token, 'user': AuthUserMiniSerializer(user).data})

@@ -251,6 +251,43 @@ class PaymentSummarySerializer(serializers.ModelSerializer):
         ]
 
 
+# ============================================================================
+# AUTH SERIALIZERS (for Swagger docs and validation)
+# ============================================================================
+class AuthRegisterSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=100)
+    password = serializers.CharField(write_only=True, min_length=6)
+    email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
+    role = serializers.ChoiceField(choices=[c[0] for c in User.ROLE_CHOICES], default='staff')
+    property = serializers.IntegerField(required=False, allow_null=True)
+
+    def validate_username(self, value):
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError('Username already exists')
+        return value
+
+    def validate_email(self, value):
+        if value and User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('Email already exists')
+        return value
+
+
+class AuthLoginSerializer(serializers.Serializer):
+    username = serializers.CharField()
+    password = serializers.CharField(write_only=True)
+
+
+class AuthUserMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'role', 'property']
+
+
+class AuthTokenResponseSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    user = AuthUserMiniSerializer()
+
+
 class MaintenanceRequestSerializer(serializers.ModelSerializer):
     property_name = serializers.CharField(source='property.name', read_only=True)
     resident_name = serializers.CharField(source='resident.name', read_only=True, allow_null=True)
