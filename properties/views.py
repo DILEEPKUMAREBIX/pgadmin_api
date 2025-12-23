@@ -183,7 +183,8 @@ class PropertyViewSet(viewsets.ModelViewSet):
         # Beds summary
         occupied_beds = Occupancy.objects.filter(property=property_obj, is_occupied=True).count()
         # 'available' should reflect total beds in the property (not free beds)
-        available_beds = Bed.objects.filter(property=property_obj).count()
+        # Filter beds via room -> floor -> property to avoid cross-property counts
+        available_beds = Bed.objects.filter(room__floor__property=property_obj).count()
 
         # Expenses
         year_start = today.replace(month=1, day=1)
