@@ -188,8 +188,8 @@ class PropertyViewSet(viewsets.ModelViewSet):
         # Expenses
         year_start = today.replace(month=1, day=1)
         month_start = today.replace(day=1)
-        expenses_year = Expense.objects.filter(expense_date__date__gte=year_start, expense_date__date__lte=today).aggregate(Sum('amount'))
-        expenses_month = Expense.objects.filter(expense_date__date__gte=month_start, expense_date__date__lte=today).aggregate(Sum('amount'))
+        expenses_year = Expense.objects.filter(property=property_obj, expense_date__date__gte=year_start, expense_date__date__lte=today).aggregate(Sum('amount'))
+        expenses_month = Expense.objects.filter(property=property_obj, expense_date__date__gte=month_start, expense_date__date__lte=today).aggregate(Sum('amount'))
 
         return Response({
             'property': {
