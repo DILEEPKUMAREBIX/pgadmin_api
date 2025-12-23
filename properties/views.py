@@ -78,6 +78,75 @@ class PropertyViewSet(viewsets.ModelViewSet):
         serializer = PropertyOccupancyDetailSerializer(property_obj)
         return Response(serializer.data)
 
+    @extend_schema(tags=['Home'], description='Home screen summary for a property')
+    @action(detail=True, methods=['get'])
+    def home_summary(self, request, pk=None):
+        from django.utils import timezone
+        from django.db.models import Sum
+        property_obj = self.get_object()
+        today = timezone.now().date()
+        d0 = today.day
+        d5 = d0 + 5
+
+        base_residents = Resident.objects.filter(
+            property=property_obj,
+            is_active=True,
+            move_out_date__isnull=True,
+            preferred_billing_day__isnull=False,
+        )
+
+        # Overdue: billing day earlier this month
+        overdue_qs = base_residents.filter(preferred_billing_day__lt=d0)
+
+        # Due soon within 5 days (wrap at month end)
+        if d5 <= 31:
+            due_soon_qs = base_residents.filter(preferred_billing_day__gte=d0, preferred_billing_day__lte=d5)
+        else:
+            wrap = d5 - 31
+            due_soon_qs = base_residents.filter(Q(preferred_billing_day__gte=d0) | Q(preferred_billing_day__lte=wrap))
+
+        overdue_total = overdue_qs.aggregate(total=Sum('rent'))['total'] or 0
+        due_soon_total = due_soon_qs.aggregate(total=Sum('rent'))['total'] or 0
+
+        # Beds summary
+        occupied_beds = Occupancy.objects.filter(property=property_obj, is_occupied=True).count()
+        available_beds = Occupancy.objects.filter(property=property_obj, is_occupied=False).count()
+
+        # Expenses
+        year_start = today.replace(month=1, day=1)
+        month_start = today.replace(day=1)
+        expenses_year = Expense.objects.filter(expense_date__date__gte=year_start, expense_date__date__lte=today).aggregate(Sum('amount'))
+        expenses_month = Expense.objects.filter(expense_date__date__gte=month_start, expense_date__date__lte=today).aggregate(Sum('amount'))
+
+        # Serialize resident details (mini)
+        overdue_data = ResidentSerializer(overdue_qs, many=True).data
+        due_soon_data = ResidentSerializer(due_soon_qs, many=True).data
+
+        return Response({
+            'property': {
+                'id': property_obj.id,
+                'name': property_obj.name,
+            },
+            'beds': {
+                'occupied': occupied_beds,
+                'available': available_beds,
+            },
+            'overdue': {
+                'count': overdue_qs.count(),
+                'total_amount': float(overdue_total),
+                'residents': overdue_data,
+            },
+            'due_soon': {
+                'count': due_soon_qs.count(),
+                'total_amount': float(due_soon_total),
+                'residents': due_soon_data,
+            },
+            'expenses': {
+                'year_total': float(expenses_year['amount__sum'] or 0),
+                'month_total': float(expenses_month['amount__sum'] or 0),
+            }
+        })
+
 
 @extend_schema(tags=['Floors'])
 class FloorViewSet(viewsets.ModelViewSet):
