@@ -223,7 +223,7 @@ class FloorViewSet(viewsets.ModelViewSet):
     """
     API endpoints for managing floors within properties.
     
-    - List floors by property
+    - List floors by a property
     - Create new floor
     - Retrieve floor details
     - Update floor information
