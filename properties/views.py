@@ -144,6 +144,7 @@ class PropertyViewSet(viewsets.ModelViewSet):
 
         # Compute overdue based on full months up to last month (ignore current month)
         overdue_residents = []
+        overdue_details = []  # per-resident with overdue_amount
         overdue_total_amount = 0.0
         # Determine last month end date for payment cutoff
         if today.month == 1:
@@ -162,6 +163,9 @@ class PropertyViewSet(viewsets.ModelViewSet):
             pending = max(0.0, expected - paid)
             if pending > 0:
                 overdue_residents.append(res)
+                data = ResidentSerializer(res).data
+                data['overdue_amount'] = round(pending, 2)
+                overdue_details.append(data)
                 overdue_total_amount += pending
 
         # Compute due soon (next installment within 5 days)
@@ -199,7 +203,7 @@ class PropertyViewSet(viewsets.ModelViewSet):
             'overdue': {
                 'count': len(overdue_residents),
                 'total_amount': round(overdue_total_amount, 2),
-                'residents': ResidentSerializer(overdue_residents, many=True).data,
+                'residents': overdue_details,
             },
             'due_soon': {
                 'count': len(due_soon_residents),
