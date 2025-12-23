@@ -83,44 +83,109 @@ class PropertyViewSet(viewsets.ModelViewSet):
     def home_summary(self, request, pk=None):
         from django.utils import timezone
         from django.db.models import Sum
+        from datetime import date, timedelta
+
         property_obj = self.get_object()
         today = timezone.now().date()
-        d0 = today.day
-        d5 = d0 + 5
 
-        base_residents = Resident.objects.filter(
+        def days_in_month(y: int, m: int):
+            import calendar
+            return calendar.monthrange(y, m)[1]
+
+        def billing_day_for(res: Resident):
+            # Use preferred_billing_day if set, else joining day
+            day = res.preferred_billing_day or (res.joining_date.day if res.joining_date else None)
+            if not day:
+                return None
+            # Clamp to valid day for month when computing actual dates
+            return day
+
+        def next_installment_date(res: Resident):
+            bday = billing_day_for(res)
+            if not bday:
+                return None
+            dim = days_in_month(today.year, today.month)
+            target_day_this_month = min(bday, dim)
+            this_month_due = date(today.year, today.month, target_day_this_month)
+            if this_month_due >= today:
+                return this_month_due
+            # Next month
+            ny = today.year + 1 if today.month == 12 else today.year
+            nm = 1 if today.month == 12 else today.month + 1
+            dim_next = days_in_month(ny, nm)
+            target_day_next = min(bday, dim_next)
+            return date(ny, nm, target_day_next)
+
+        # Helper: count calendar months from join month to last month inclusive
+        def month_count_until_last_month(res: Resident):
+            if not res.joining_date:
+                return 0
+            # Last month end
+            if today.month == 1:
+                last_month_year = today.year - 1
+                last_month = 12
+            else:
+                last_month_year = today.year
+                last_month = today.month - 1
+            # If joining month is after last month, zero
+            jm = res.joining_date.month
+            jy = res.joining_date.year
+            if (jy > last_month_year) or (jy == last_month_year and jm > last_month):
+                return 0
+            return (last_month_year - jy) * 12 + (last_month - jm) + 1
+
+        # Active monthly residents
+        residents_monthly = Resident.objects.filter(
             property=property_obj,
             is_active=True,
             move_out_date__isnull=True,
-            preferred_billing_day__isnull=False,
+            rent_type='monthly',
         )
 
-        # Overdue: billing day earlier this month
-        overdue_qs = base_residents.filter(preferred_billing_day__lt=d0)
-
-        # Due soon within 5 days (wrap at month end)
-        if d5 <= 31:
-            due_soon_qs = base_residents.filter(preferred_billing_day__gte=d0, preferred_billing_day__lte=d5)
+        # Compute overdue based on full months up to last month (ignore current month)
+        overdue_residents = []
+        overdue_total_amount = 0.0
+        # Determine last month end date for payment cutoff
+        if today.month == 1:
+            lmy, lmm = today.year - 1, 12
         else:
-            wrap = d5 - 31
-            due_soon_qs = base_residents.filter(Q(preferred_billing_day__gte=d0) | Q(preferred_billing_day__lte=wrap))
+            lmy, lmm = today.year, today.month - 1
+        lmdim = days_in_month(lmy, lmm)
+        last_month_end = date(lmy, lmm, lmdim)
 
-        overdue_total = overdue_qs.aggregate(total=Sum('rent'))['total'] or 0
-        due_soon_total = due_soon_qs.aggregate(total=Sum('rent'))['total'] or 0
+        for res in residents_monthly:
+            months = month_count_until_last_month(res)
+            expected = float(res.rent) * months
+            # Payments made up to end of last month
+            paid = Payment.objects.filter(resident=res, payment_date__date__lte=last_month_end).aggregate(total=Sum('amount'))['total'] or 0
+            paid = float(paid)
+            pending = max(0.0, expected - paid)
+            if pending > 0:
+                overdue_residents.append(res)
+                overdue_total_amount += pending
+
+        # Compute due soon (next installment within 5 days)
+        due_soon_residents = []
+        due_soon_total_amount = 0.0
+        for res in residents_monthly:
+            nxt = next_installment_date(res)
+            if not nxt:
+                continue
+            delta_days = (nxt - today).days
+            if 0 <= delta_days <= 5:
+                due_soon_residents.append(res)
+                due_soon_total_amount += float(res.rent)
 
         # Beds summary
         occupied_beds = Occupancy.objects.filter(property=property_obj, is_occupied=True).count()
-        available_beds = Occupancy.objects.filter(property=property_obj, is_occupied=False).count()
+        # 'available' should reflect total beds in the property (not free beds)
+        available_beds = Bed.objects.filter(property=property_obj).count()
 
         # Expenses
         year_start = today.replace(month=1, day=1)
         month_start = today.replace(day=1)
         expenses_year = Expense.objects.filter(expense_date__date__gte=year_start, expense_date__date__lte=today).aggregate(Sum('amount'))
         expenses_month = Expense.objects.filter(expense_date__date__gte=month_start, expense_date__date__lte=today).aggregate(Sum('amount'))
-
-        # Serialize resident details (mini)
-        overdue_data = ResidentSerializer(overdue_qs, many=True).data
-        due_soon_data = ResidentSerializer(due_soon_qs, many=True).data
 
         return Response({
             'property': {
@@ -132,14 +197,14 @@ class PropertyViewSet(viewsets.ModelViewSet):
                 'available': available_beds,
             },
             'overdue': {
-                'count': overdue_qs.count(),
-                'total_amount': float(overdue_total),
-                'residents': overdue_data,
+                'count': len(overdue_residents),
+                'total_amount': round(overdue_total_amount, 2),
+                'residents': ResidentSerializer(overdue_residents, many=True).data,
             },
             'due_soon': {
-                'count': due_soon_qs.count(),
-                'total_amount': float(due_soon_total),
-                'residents': due_soon_data,
+                'count': len(due_soon_residents),
+                'total_amount': round(due_soon_total_amount, 2),
+                'residents': ResidentSerializer(due_soon_residents, many=True).data,
             },
             'expenses': {
                 'year_total': float(expenses_year['amount__sum'] or 0),
