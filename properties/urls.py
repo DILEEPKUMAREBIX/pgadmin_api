@@ -4,7 +4,7 @@ from .views import (
     PropertyViewSet, FloorViewSet, RoomViewSet, BedViewSet,
     ResidentViewSet, OccupancyViewSet, OccupancyHistoryViewSet,
     ExpenseViewSet, PaymentViewSet, MaintenanceRequestViewSet,
-    UserViewSet, AuthViewSet
+    UserViewSet, AuthViewSet, UploadsViewSet
 )
 
 router = DefaultRouter()
@@ -22,6 +22,7 @@ router.register(r'payments', PaymentViewSet, basename='payment')
 router.register(r'maintenance-requests', MaintenanceRequestViewSet, basename='maintenance-request')
 router.register(r'users', UserViewSet, basename='user')
 router.register(r'auth', AuthViewSet, basename='auth')
+router.register(r'uploads', UploadsViewSet, basename='uploads')
 
 app_name = 'properties'
 

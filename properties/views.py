@@ -8,8 +8,10 @@ from drf_spectacular.types import OpenApiTypes
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.hashers import make_password, check_password
 from core.auth import generate_jwt
+from core.storage import build_object_name, generate_signed_upload_url
 from .serializers import (
-    AuthRegisterSerializer, AuthLoginSerializer, AuthTokenResponseSerializer, AuthUserMiniSerializer
+    AuthRegisterSerializer, AuthLoginSerializer, AuthTokenResponseSerializer, AuthUserMiniSerializer,
+    UploadRequestSerializer, UploadRequestResponseSerializer, UploadConfirmSerializer
 )
 from .models import (
     Property, Floor, Room, Bed, Resident, Occupancy, OccupancyHistory,
@@ -669,3 +671,65 @@ class AuthViewSet(viewsets.ViewSet):
             return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
         token = generate_jwt(user)
         return Response({'token': token, 'user': AuthUserMiniSerializer(user).data})
+
+
+@extend_schema(tags=['Uploads'])
+class UploadsViewSet(viewsets.ViewSet):
+    """Endpoints for requesting signed URLs and confirming resident uploads."""
+
+    @extend_schema(
+        description='Request a signed URL to upload resident media to GCS',
+        request=UploadRequestSerializer,
+        responses=UploadRequestResponseSerializer,
+    )
+    @action(detail=False, methods=['post'], url_path='request')
+    def request_upload(self, request):
+        ser = UploadRequestSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        rid = ser.validated_data['resident_id']
+        kind = ser.validated_data['kind']
+        content_type = ser.validated_data['content_type']
+
+        try:
+            resident = Resident.objects.get(id=rid)
+        except Resident.DoesNotExist:
+            return Response({'detail': 'Resident not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        object_name = build_object_name(resident.property_id, resident.id, kind, content_type)
+        try:
+            signed_url, storage_url = generate_signed_upload_url(object_name, content_type)
+        except Exception as e:
+            return Response({'detail': f'Failed to generate signed URL: {e}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        from django.conf import settings
+        return Response({
+            'upload_url': signed_url,
+            'storage_url': storage_url,
+            'expires_in': int(getattr(settings, 'GCS_SIGNED_URL_EXPIRY', 900)),
+        })
+
+    @extend_schema(
+        description='Confirm upload and persist URL to resident',
+        request=UploadConfirmSerializer,
+        responses={200: ResidentSerializer},
+    )
+    @action(detail=False, methods=['post'], url_path='confirm')
+    def confirm_upload(self, request):
+        ser = UploadConfirmSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        rid = ser.validated_data['resident_id']
+        kind = ser.validated_data['kind']
+        storage_url = ser.validated_data['storage_url']
+
+        try:
+            resident = Resident.objects.get(id=rid)
+        except Resident.DoesNotExist:
+            return Response({'detail': 'Resident not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if kind == 'resident_photo':
+            resident.photo_url = storage_url
+        else:
+            resident.aadhar_url = storage_url
+        resident.save(update_fields=['photo_url' if kind == 'resident_photo' else 'aadhar_url'])
+
+        return Response(ResidentSerializer(resident).data)

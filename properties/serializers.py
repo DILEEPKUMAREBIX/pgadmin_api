@@ -319,6 +319,34 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 # ============================================================================
+# UPLOAD SERIALIZERS
+# ============================================================================
+class UploadRequestSerializer(serializers.Serializer):
+    resident_id = serializers.IntegerField()
+    kind = serializers.ChoiceField(choices=['resident_photo', 'aadhar_file'])
+    content_type = serializers.CharField()
+
+    def validate(self, attrs):
+        # Ensure resident exists
+        rid = attrs['resident_id']
+        if not Resident.objects.filter(id=rid).exists():
+            raise serializers.ValidationError({'resident_id': 'Resident not found'})
+        return attrs
+
+
+class UploadRequestResponseSerializer(serializers.Serializer):
+    upload_url = serializers.CharField()
+    storage_url = serializers.CharField()
+    expires_in = serializers.IntegerField()
+
+
+class UploadConfirmSerializer(serializers.Serializer):
+    resident_id = serializers.IntegerField()
+    kind = serializers.ChoiceField(choices=['resident_photo', 'aadhar_file'])
+    storage_url = serializers.URLField()
+
+
+# ============================================================================
 # CONSOLIDATED OCCUPANCY VIEW SERIALIZERS
 # ============================================================================
 class BedOccupancySerializer(serializers.Serializer):

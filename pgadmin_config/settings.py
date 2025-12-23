@@ -196,6 +196,13 @@ LOGGING = {
     },
 }
 
+# ============================================================================
+# GOOGLE CLOUD STORAGE
+# ============================================================================
+GCS_BUCKET = config('GCS_BUCKET', default=None)
+GCS_SIGNED_URL_EXPIRY = config('GCS_SIGNED_URL_EXPIRY', default=15 * 60, cast=int)
+GCS_UPLOAD_PREFIX = config('GCS_UPLOAD_PREFIX', default='properties')
+
 # Note: MIDDLEWARE is already defined above with the full stack including
 # SecurityMiddleware, WhiteNoiseMiddleware, SessionMiddleware, CorsMiddleware,
 # CommonMiddleware, CsrfViewMiddleware, AuthenticationMiddleware, MessageMiddleware,
