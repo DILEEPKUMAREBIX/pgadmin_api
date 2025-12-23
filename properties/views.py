@@ -157,8 +157,8 @@ class PropertyViewSet(viewsets.ModelViewSet):
         for res in residents_monthly:
             months = month_count_until_last_month(res)
             expected = float(res.rent) * months
-            # Payments made up to end of last month
-            paid = Payment.objects.filter(resident=res, payment_date__date__lte=last_month_end).aggregate(total=Sum('amount'))['total'] or 0
+            # Payments made till date (use amount field)
+            paid = Payment.objects.filter(resident=res, payment_date__date__lte=today).aggregate(total=Sum('amount'))['total'] or 0
             paid = float(paid)
             pending = max(0.0, expected - paid)
             if pending > 0:
@@ -334,6 +334,39 @@ class ResidentViewSet(viewsets.ModelViewSet):
             preferred_billing_day__lt=d0
         )
         serializer = self.get_serializer(overdue_residents, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(
+        tags=['Residents'],
+        description='Get historical residents (move_out_date set). Optional filters: property, start_date, end_date (YYYY-MM-DD).',
+        parameters=[
+            OpenApiParameter(name='property', description='Property ID', required=False, type=OpenApiTypes.INT),
+            OpenApiParameter(name='start_date', description='Move-out start date (YYYY-MM-DD)', required=False, type=OpenApiTypes.STR),
+            OpenApiParameter(name='end_date', description='Move-out end date (YYYY-MM-DD)', required=False, type=OpenApiTypes.STR),
+        ]
+    )
+    @action(detail=False, methods=['get'], url_path='historical')
+    def historical(self, request):
+        from datetime import datetime
+        qs = Resident.objects.filter(move_out_date__isnull=False)
+        prop_id = request.query_params.get('property')
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        if prop_id:
+            qs = qs.filter(property_id=prop_id)
+        if start_date:
+            try:
+                sd = datetime.strptime(start_date, '%Y-%m-%d').date()
+                qs = qs.filter(move_out_date__gte=sd)
+            except ValueError:
+                return Response({'detail': 'Invalid start_date format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+        if end_date:
+            try:
+                ed = datetime.strptime(end_date, '%Y-%m-%d').date()
+                qs = qs.filter(move_out_date__lte=ed)
+            except ValueError:
+                return Response({'detail': 'Invalid end_date format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
 
 
