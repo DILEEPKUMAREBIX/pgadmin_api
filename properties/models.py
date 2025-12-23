@@ -391,3 +391,12 @@ class User(models.Model):
 
     def __str__(self):
         return self.username
+
+    # Make compatible with DRF's IsAuthenticated check
+    @builtins.property
+    def is_authenticated(self):
+        return True
+
+    @builtins.property
+    def is_anonymous(self):
+        return False

@@ -8,6 +8,8 @@ from .views import (
 )
 
 router = DefaultRouter()
+# Accept both with and without trailing slash (avoid 405 on POST without slash)
+router.trailing_slash = '/?'
 router.register(r'properties', PropertyViewSet, basename='property')
 router.register(r'floors', FloorViewSet, basename='floor')
 router.register(r'rooms', RoomViewSet, basename='room')
