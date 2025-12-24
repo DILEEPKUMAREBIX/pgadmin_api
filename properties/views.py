@@ -399,6 +399,24 @@ class ResidentViewSet(viewsets.ModelViewSet):
     ordering_fields = ['first_name', 'last_name', 'joining_date', 'preferred_billing_day', 'created_at']
     ordering = ['-created_at']
 
+    def get_queryset(self):
+        """
+        Default: return only active residents (move_out_date is NULL).
+        To include moved-out residents as well, pass query `include_moved_out=true`.
+        To fetch only moved-out residents via this endpoint, pass `moved_out_only=true`
+        (Alternatively, use `/residents/historical/`).
+        """
+        qs = Resident.objects.all()
+        params = self.request.query_params
+        moved_out_only = params.get('moved_out_only')
+        include_moved_out = params.get('include_moved_out')
+        if moved_out_only and moved_out_only.lower() in ('1', 'true', 'yes'):  # only moved out
+            return qs.filter(move_out_date__isnull=False)
+        if include_moved_out and include_moved_out.lower() in ('1', 'true', 'yes'):  # include all
+            return qs
+        # default: active only
+        return qs.filter(is_active=True, move_out_date__isnull=True)
+
     @action(detail=False, methods=['get'])
     def due_soon(self, request):
         """Get residents with billing day within next 7 days"""
@@ -727,6 +745,7 @@ class AuthViewSet(viewsets.ViewSet):
         description='Create a new user',
         request=AuthRegisterSerializer,
         responses={201: AuthTokenResponseSerializer},
+        security=[],
     )
     @action(detail=False, methods=['post'], url_path='register')
     def register(self, request):
@@ -748,6 +767,7 @@ class AuthViewSet(viewsets.ViewSet):
         description='Login and obtain JWT token',
         request=AuthLoginSerializer,
         responses=AuthTokenResponseSerializer,
+        security=[],
     )
     @action(detail=False, methods=['post'], url_path='login')
     def login(self, request):
