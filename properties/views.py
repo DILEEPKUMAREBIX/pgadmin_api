@@ -745,7 +745,6 @@ class AuthViewSet(viewsets.ViewSet):
         description='Create a new user',
         request=AuthRegisterSerializer,
         responses={201: AuthTokenResponseSerializer},
-        security=[],
     )
     @action(detail=False, methods=['post'], url_path='register')
     def register(self, request):
@@ -767,7 +766,6 @@ class AuthViewSet(viewsets.ViewSet):
         description='Login and obtain JWT token',
         request=AuthLoginSerializer,
         responses=AuthTokenResponseSerializer,
-        security=[],
     )
     @action(detail=False, methods=['post'], url_path='login')
     def login(self, request):
