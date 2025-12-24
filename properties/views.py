@@ -217,6 +217,100 @@ class PropertyViewSet(viewsets.ModelViewSet):
             }
         })
 
+    @extend_schema(
+        tags=['Finance'],
+        description='Financial summary for the last 5 years with monthly income (payments) and expenses. Returns per-year totals and top spending categories.'
+    )
+    @action(detail=True, methods=['get'], url_path='financial_summary')
+    def financial_summary(self, request, pk=None):
+        from django.utils import timezone
+        from django.db.models import Sum
+        from django.db.models.functions import ExtractMonth
+
+        property_obj = self.get_object()
+        current_year = timezone.now().date().year
+        years = [current_year - i for i in range(0, 5)]
+
+        results = []
+        for year in years:
+            # Monthly income (payments)
+            income_rows = (
+                Payment.objects
+                .filter(property=property_obj, payment_date__year=year)
+                .annotate(month=ExtractMonth('payment_date'))
+                .values('month')
+                .annotate(total=Sum('amount'))
+            )
+            income_series = [0.0] * 12
+            for row in income_rows:
+                m = row['month']
+                if 1 <= m <= 12:
+                    income_series[m - 1] = float(row['total'] or 0)
+
+            # Monthly expenses
+            expense_rows = (
+                Expense.objects
+                .filter(property=property_obj, expense_date__year=year)
+                .annotate(month=ExtractMonth('expense_date'))
+                .values('month')
+                .annotate(total=Sum('amount'))
+            )
+            expense_series = [0.0] * 12
+            for row in expense_rows:
+                m = row['month']
+                if 1 <= m <= 12:
+                    expense_series[m - 1] = float(row['total'] or 0)
+
+            # Totals for the year
+            total_income = float(
+                Payment.objects.filter(property=property_obj, payment_date__year=year).aggregate(Sum('amount'))['amount__sum'] or 0
+            )
+            total_expenses = float(
+                Expense.objects.filter(property=property_obj, expense_date__year=year).aggregate(Sum('amount'))['amount__sum'] or 0
+            )
+
+            # Top spendings by category (top 5)
+            top_categories_qs = (
+                Expense.objects
+                .filter(property=property_obj, expense_date__year=year)
+                .values('category')
+                .annotate(total=Sum('amount'))
+                .order_by('-total')[:5]
+            )
+            top_categories = [{'category': r['category'], 'total': float(r['total'] or 0)} for r in top_categories_qs]
+
+            # Resident stats for the year
+            joined_count = Resident.objects.filter(property=property_obj, joining_date__year=year).count()
+            moved_out_count = Resident.objects.filter(property=property_obj, move_out_date__year=year).count()
+
+            results.append({
+                'year': year,
+                'monthly': {
+                    'income': income_series,
+                    'expenses': expense_series,
+                },
+                'totals': {
+                    'income': total_income,
+                    'expenses': total_expenses,
+                    'net': round(total_income - total_expenses, 2),
+                },
+                'top_spendings': {
+                    'categories': top_categories,
+                },
+                'residents': {
+                    'joined': joined_count,
+                    'moved_out': moved_out_count,
+                },
+            })
+
+        return Response({
+            'property': {
+                'id': property_obj.id,
+                'name': property_obj.name,
+            },
+            'years': results,
+        })
+
 
 @extend_schema(tags=['Floors'])
 class FloorViewSet(viewsets.ModelViewSet):
