@@ -160,7 +160,8 @@ class PropertyViewSet(viewsets.ModelViewSet):
             # Payments made till date (use amount field)
             paid = Payment.objects.filter(resident=res, payment_date__date__lte=today).aggregate(total=Sum('amount'))['total'] or 0
             paid = float(paid)
-            pending = max(0.0, expected - paid)
+            # Include resident-level arrears on top of computed pending
+            pending = max(0.0, expected - paid) + float(getattr(res, 'arrears', 0) or 0)
             if pending > 0:
                 overdue_residents.append(res)
                 data = ResidentSerializer(res).data

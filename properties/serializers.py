@@ -90,6 +90,7 @@ class ResidentSerializer(serializers.ModelSerializer):
             'photo_url', 'aadhar_url', 'current_floor', 'current_floor_number',
             'current_room', 'current_room_number', 'current_bed', 'current_bed_number',
             'floor_id', 'room_id', 'bed_id',
+            'arrears',
             'payments',
             'notes', 'override_comment', 'is_active', 'created_at', 'updated_at'
         ]
