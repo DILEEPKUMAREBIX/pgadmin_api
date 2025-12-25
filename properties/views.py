@@ -78,6 +78,40 @@ class PropertyViewSet(viewsets.ModelViewSet):
         serializer = PropertyOccupancyDetailSerializer(property_obj)
         return Response(serializer.data)
 
+    @extend_schema(
+        tags=['Payments'],
+        description='List all payments for this property with resident details. Optional filters: start_date, end_date (YYYY-MM-DD).',
+        parameters=[
+            OpenApiParameter(name='start_date', description='Start date (YYYY-MM-DD)', required=False, type=OpenApiTypes.STR),
+            OpenApiParameter(name='end_date', description='End date (YYYY-MM-DD)', required=False, type=OpenApiTypes.STR),
+        ]
+    )
+    @action(detail=True, methods=['get'], url_path='payments')
+    def payments(self, request, pk=None):
+        """All payments for the property, including resident info."""
+        from datetime import datetime
+
+        property_obj = self.get_object()
+        qs = Payment.objects.filter(property=property_obj).order_by('-payment_date')
+
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        if start_date:
+            try:
+                sd = datetime.strptime(start_date, '%Y-%m-%d').date()
+                qs = qs.filter(payment_date__date__gte=sd)
+            except ValueError:
+                return Response({'detail': 'Invalid start_date format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+        if end_date:
+            try:
+                ed = datetime.strptime(end_date, '%Y-%m-%d').date()
+                qs = qs.filter(payment_date__date__lte=ed)
+            except ValueError:
+                return Response({'detail': 'Invalid end_date format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = PaymentSerializer(qs, many=True)
+        return Response(serializer.data)
+
     @extend_schema(tags=['Home'], description='Home screen summary for a property')
     @action(detail=True, methods=['get'])
     def home_summary(self, request, pk=None):
