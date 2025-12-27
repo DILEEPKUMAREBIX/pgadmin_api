@@ -217,8 +217,9 @@ LOGGING = {
 # ============================================================================
 # GOOGLE CLOUD STORAGE
 # ============================================================================
-GCS_BUCKET = config('GCS_BUCKET', default=None)
-GCS_UPLOAD_PREFIX = config('GCS_UPLOAD_PREFIX', default='properties')
+# Read from environment first, then fall back to decouple config
+GCS_BUCKET = os.environ.get('GCS_BUCKET') or config('GCS_BUCKET', default=None)
+GCS_UPLOAD_PREFIX = os.environ.get('GCS_UPLOAD_PREFIX') or config('GCS_UPLOAD_PREFIX', default='properties')
 
 # Note: MIDDLEWARE is already defined above with the full stack including
 # SecurityMiddleware, WhiteNoiseMiddleware, SessionMiddleware, CorsMiddleware,

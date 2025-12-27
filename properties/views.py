@@ -4,13 +4,15 @@ from django.db.models import Q
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema, OpenApiParameter, inline_serializer
+from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.hashers import make_password, check_password
 from core.auth import generate_jwt
 from django.conf import settings
 import logging
+import mimetypes
+from urllib.parse import urlparse
 from .serializers import (
     AuthRegisterSerializer, AuthLoginSerializer, AuthTokenResponseSerializer, AuthUserMiniSerializer
 )
@@ -224,10 +226,25 @@ class PropertyViewSet(viewsets.ModelViewSet):
         # Filter beds via room -> floor -> property to avoid cross-property counts
         available_beds = Bed.objects.filter(room__floor__property=property_obj).count()
 
-        @extend_schema(description='Create resident. To upload files, send multipart/form-data with fields photo (image) and aadhar (file). Parser supports multipart.')
-        tags=['Finance'],
-        description='Financial summary for the last 5 years with monthly income (payments) and expenses. Returns per-year totals and top spending categories.'
-    )
+        return Response({
+            'property': {
+                'id': property_obj.id,
+                'name': property_obj.name,
+            },
+            'occupied_beds': occupied_beds,
+            'available_beds': available_beds,
+            'overdue': {
+                'count': len(overdue_residents),
+                'total_amount': round(overdue_total_amount, 2),
+                'details': overdue_details,
+            },
+            'due_soon': {
+                'count': len(due_soon_residents),
+                'total_amount': round(due_soon_total_amount, 2),
+            },
+        })
+
+    @extend_schema(tags=['Finance'], description='Financial summary for the last 5 years with monthly income (payments) and expenses. Returns per-year totals and top spending categories.')
     @action(detail=True, methods=['get'], url_path='financial_summary')
     def financial_summary(self, request, pk=None):
         from django.utils import timezone
@@ -458,32 +475,6 @@ class ResidentViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         description='Create resident and optionally upload photo/aadhar via multipart/form-data (fields: photo, aadhar).',
-        request={
-            'multipart/form-data': inline_serializer(
-                name='ResidentCreateMultipart',
-                fields={
-                    'property': serializers.IntegerField(),
-                    'first_name': serializers.CharField(),
-                    'last_name': serializers.CharField(required=False, allow_blank=True),
-                    'gender': serializers.CharField(required=False),
-                    'email': serializers.EmailField(required=False, allow_blank=True, allow_null=True),
-                    'mobile': serializers.CharField(required=False, allow_blank=True),
-                    'dob': serializers.DateField(required=False),
-                    'address': serializers.CharField(required=False, allow_blank=True),
-                    'rent': serializers.DecimalField(max_digits=10, decimal_places=2),
-                    'rent_type': serializers.CharField(required=False),
-                    'joining_date': serializers.DateField(),
-                    'preferred_billing_day': serializers.IntegerField(required=False),
-                    'floor_id': serializers.IntegerField(required=True),
-                    'room_id': serializers.IntegerField(required=True),
-                    'bed_id': serializers.IntegerField(required=True),
-                    'notes': serializers.CharField(required=False, allow_blank=True),
-                    'override_comment': serializers.CharField(required=False, allow_blank=True),
-                    'photo': serializers.ImageField(required=False),
-                    'aadhar': serializers.FileField(required=False),
-                }
-            )
-        },
         responses=ResidentSerializer,
     )
     def create(self, request, *args, **kwargs):
@@ -518,6 +509,64 @@ class ResidentViewSet(viewsets.ModelViewSet):
         out = self.get_serializer(resident)
         headers = self.get_success_headers(out.data)
         return Response(out.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @extend_schema(
+        description='Proxy private media from GCS for a resident. Kind can be "photo" or "aadhar". Streams bytes with correct Content-Type.',
+        parameters=[
+            OpenApiParameter(name='kind', description='Media kind: photo or aadhar', required=True, type=OpenApiTypes.STR),
+        ],
+    )
+    @action(detail=True, methods=['get'], url_path='media/(?P<kind>[^/.]+)')
+    def media(self, request, pk=None, kind=None):
+        """Stream resident media securely from GCS without exposing public bucket access."""
+        resident = self.get_object()
+        if kind not in ('photo', 'aadhar'):
+            return Response({'detail': 'Invalid kind. Use photo or aadhar.'}, status=status.HTTP_400_BAD_REQUEST)
+        url = resident.photo_url if kind == 'photo' else resident.aadhar_url
+        if not url:
+            return Response({'detail': 'Media not available for resident.'}, status=status.HTTP_404_NOT_FOUND)
+
+        bucket_name = settings.GCS_BUCKET
+        if not bucket_name:
+            self.logger.error('Media proxy: GCS_BUCKET not configured')
+            return Response({'detail': 'Storage not configured'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        try:
+            from google.cloud import storage
+            parsed = urlparse(url)
+            parts = parsed.path.strip('/').split('/')
+            # Expect path like /<bucket>/<object_name>
+            object_name = None
+            if parts and parts[0] == bucket_name:
+                object_name = '/'.join(parts[1:])
+            else:
+                # Fallback: if a full URL is not using storage.googleapis.com format, try to use entire path
+                # e.g., if photo_url stored as just object path
+                object_name = '/'.join(parts)
+
+            if not object_name:
+                self.logger.error('Media proxy: could not parse object name from url=%s', url)
+                return Response({'detail': 'Invalid media url'}, status=status.HTTP_400_BAD_REQUEST)
+
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(object_name)
+            if not blob.exists():
+                self.logger.warning('Media proxy: blob not found bucket=%s object=%s', bucket_name, object_name)
+                return Response({'detail': 'Media not found'}, status=status.HTTP_404_NOT_FOUND)
+            # Load metadata for content_type
+            blob.reload()
+            content_type = blob.content_type or mimetypes.guess_type(object_name)[0] or 'application/octet-stream'
+            data = blob.download_as_bytes()
+            from django.http import HttpResponse
+            resp = HttpResponse(data, content_type=content_type)
+            resp['Cache-Control'] = 'private, max-age=300'
+            # Inline display for common types
+            resp['Content-Disposition'] = f'inline; filename="{object_name.split('/')[-1]}"'
+            return resp
+        except Exception as e:
+            self.logger.exception('Media proxy error kind=%s resident_id=%s: %s', kind, resident.id, e)
+            return Response({'detail': 'Media fetch error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['get'])
     def due_soon(self, request):
