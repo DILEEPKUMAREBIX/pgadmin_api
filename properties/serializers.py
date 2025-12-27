@@ -453,3 +453,62 @@ class PropertyOccupancyDetailSerializer(serializers.Serializer):
         """Get all floors with detailed room and occupancy info"""
         floors = obj.floors.all().order_by('floor_level')
         return FloorOccupancySerializer(floors, many=True).data
+
+
+# ============================================================================
+# PROPERTY SETUP (REQUEST/RESPONSE) SERIALIZERS
+# ============================================================================
+class PropertySetupRequestSerializer(serializers.Serializer):
+    floors_count = serializers.IntegerField(min_value=1)
+    rooms_per_floor = serializers.IntegerField(min_value=1)
+    beds_per_room = serializers.IntegerField(min_value=1)
+    # Optional naming inputs
+    floor_names = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
+    # Map of floor_level (string or int accepted) -> list of room numbers/names
+    room_numbers = serializers.DictField(child=serializers.ListField(child=serializers.CharField()), required=False)
+    # Map of floor_level -> map of room_number -> list of bed numbers/names
+    bed_numbers = serializers.DictField(child=serializers.DictField(child=serializers.ListField(child=serializers.CharField())), required=False)
+    # Reset existing structure
+    reset = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        floors = attrs.get('floors_count')
+        rooms = attrs.get('rooms_per_floor')
+        beds = attrs.get('beds_per_room')
+        floor_names = attrs.get('floor_names')
+        room_numbers = attrs.get('room_numbers') or {}
+        bed_numbers = attrs.get('bed_numbers') or {}
+
+        # Validate floor_names length
+        if floor_names:
+            if len(floor_names) != floors:
+                raise serializers.ValidationError('floor_names length must equal floors_count')
+        # Validate room_numbers lengths per floor
+        for k, v in room_numbers.items():
+            try:
+                lvl = int(k)
+            except Exception:
+                raise serializers.ValidationError('room_numbers keys must be floor levels (int)')
+            if lvl < 1 or lvl > floors:
+                raise serializers.ValidationError('room_numbers contains floor outside 1..floors_count')
+            if len(v) != rooms:
+                raise serializers.ValidationError(f'room_numbers for floor {lvl} must have {rooms} entries')
+        # Validate bed_numbers lengths per room
+        for fk, fv in bed_numbers.items():
+            try:
+                lvl = int(fk)
+            except Exception:
+                raise serializers.ValidationError('bed_numbers keys must be floor levels (int)')
+            if lvl < 1 or lvl > floors:
+                raise serializers.ValidationError('bed_numbers contains floor outside 1..floors_count')
+            for rk, rv in fv.items():
+                if len(rv) != beds:
+                    raise serializers.ValidationError(f'bed_numbers for floor {lvl} room {rk} must have {beds} entries')
+        return attrs
+
+
+class PropertySetupResponseSerializer(serializers.Serializer):
+    property_id = serializers.IntegerField()
+    created_floors = serializers.IntegerField()
+    created_rooms = serializers.IntegerField()
+    created_beds = serializers.IntegerField()

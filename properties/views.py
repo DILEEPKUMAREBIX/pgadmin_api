@@ -4,6 +4,7 @@ from django.db.models import Q
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db import transaction
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from rest_framework.permissions import AllowAny
@@ -24,7 +25,8 @@ from .serializers import (
     PropertySerializer, FloorSerializer, RoomSerializer, BedSerializer,
     ResidentSerializer, OccupancySerializer, OccupancyHistorySerializer,
     ExpenseSerializer, PaymentSerializer, MaintenanceRequestSerializer,
-    UserSerializer, PropertyOccupancyDetailSerializer
+    UserSerializer, PropertyOccupancyDetailSerializer,
+    PropertySetupRequestSerializer, PropertySetupResponseSerializer
 )
 
 
@@ -82,6 +84,104 @@ class PropertyViewSet(viewsets.ModelViewSet):
         property_obj = self.get_object()
         serializer = PropertyOccupancyDetailSerializer(property_obj)
         return Response(serializer.data)
+
+    @extend_schema(
+        tags=['Properties'],
+        description='Configure property structure in one call: create floors, rooms per floor, and beds per room. Optionally provide names.',
+        request=PropertySetupRequestSerializer,
+        responses=PropertySetupResponseSerializer,
+    )
+    @action(detail=True, methods=['post'], url_path='setup-structure')
+    def setup_structure(self, request, pk=None):
+        """Create floors, rooms, and beds for a property in a single request.
+
+        Payload:
+        - floors_count: int
+        - rooms_per_floor: int
+        - beds_per_room: int
+        - floor_names: [str] (optional, length = floors_count)
+        - room_numbers: { '<floor_level>': [str, ...] } (optional)
+        - bed_numbers: { '<floor_level>': { '<room_number>': [str, ...] } } (optional)
+        - reset: bool (optional) — if true, clears existing floors/rooms/beds first
+        """
+        property_obj = self.get_object()
+        input_ser = PropertySetupRequestSerializer(data=request.data)
+        input_ser.is_valid(raise_exception=True)
+        data = input_ser.validated_data
+
+        floors_count = data['floors_count']
+        rooms_per_floor = data['rooms_per_floor']
+        beds_per_room = data['beds_per_room']
+        floor_names = data.get('floor_names') or []
+        room_numbers_map = data.get('room_numbers') or {}
+        bed_numbers_map = data.get('bed_numbers') or {}
+        reset = data.get('reset', False)
+
+        created_floors = 0
+        created_rooms = 0
+        created_beds = 0
+
+        with transaction.atomic():
+            if reset:
+                # Cascade deletes rooms/beds/occupancies via FK
+                property_obj.floors.all().delete()
+
+            # If not resetting, ensure no conflict with existing structure
+            elif property_obj.floors.exists():
+                return Response({'detail': 'Property already has floors. Pass reset=true to reconfigure.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Create floors → rooms → beds (+ occupancy)
+            for level in range(1, floors_count + 1):
+                fname = floor_names[level - 1] if level - 1 < len(floor_names) else f'Floor {level}'
+                floor = Floor.objects.create(property=property_obj, floor_level=level, floor_name=fname)
+                created_floors += 1
+
+                # Determine room numbers for this floor
+                rn_list = room_numbers_map.get(str(level)) or room_numbers_map.get(level) or []
+
+                for r_idx in range(1, rooms_per_floor + 1):
+                    room_number = rn_list[r_idx - 1] if r_idx - 1 < len(rn_list) else f'{level:02d}{r_idx:02d}'
+                    room = Room.objects.create(
+                        floor=floor,
+                        property=property_obj,
+                        room_number=room_number,
+                        total_beds=beds_per_room,
+                    )
+                    created_rooms += 1
+
+                    # Determine bed numbers for this room
+                    bn_floor = bed_numbers_map.get(str(level)) or bed_numbers_map.get(level) or {}
+                    bn_list = bn_floor.get(room_number) or []
+
+                    for b_idx in range(1, beds_per_room + 1):
+                        # Default bed numbers to letters A, B, C... or numeric
+                        default_bnum = chr(64 + b_idx) if b_idx <= 26 else str(b_idx)
+                        bed_number = bn_list[b_idx - 1] if b_idx - 1 < len(bn_list) else default_bnum
+                        bed = Bed.objects.create(
+                            room=room,
+                            floor=floor,
+                            property=property_obj,
+                            bed_number=bed_number,
+                            bed_name=bed_number,
+                        )
+                        created_beds += 1
+
+                        # Initialize occupancy as available
+                        Occupancy.objects.create(
+                            property=property_obj,
+                            floor=floor,
+                            room=room,
+                            bed=bed,
+                            is_occupied=False,
+                        )
+
+        out = PropertySetupResponseSerializer({
+            'property_id': property_obj.id,
+            'created_floors': created_floors,
+            'created_rooms': created_rooms,
+            'created_beds': created_beds,
+        })
+        return Response(out.data, status=status.HTTP_201_CREATED)
 
     @extend_schema(
         tags=['Payments'],
