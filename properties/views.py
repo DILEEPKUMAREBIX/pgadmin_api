@@ -8,6 +8,7 @@ from drf_spectacular.types import OpenApiTypes
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.hashers import make_password, check_password
 from core.auth import generate_jwt
+from django.conf import settings
 from .serializers import (
     AuthRegisterSerializer, AuthLoginSerializer, AuthTokenResponseSerializer, AuthUserMiniSerializer
 )
@@ -434,6 +435,27 @@ class ResidentViewSet(viewsets.ModelViewSet):
     ordering_fields = ['first_name', 'last_name', 'joining_date', 'preferred_billing_day', 'created_at']
     ordering = ['-created_at']
 
+    def _upload_to_gcs(self, resident: Resident, file_obj, kind: str):
+        """Upload a file object to GCS and return the public URL."""
+        bucket_name = settings.GCS_BUCKET
+        if not bucket_name or not file_obj:
+            return None
+        try:
+            from google.cloud import storage
+        except Exception:
+            return None
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        # Build object path: properties/{property_id}/residents/{resident_id}/{kind}/{filename}
+        filename = getattr(file_obj, 'name', None) or f'{kind}.bin'
+        prefix = settings.GCS_UPLOAD_PREFIX or 'properties'
+        object_name = f"{prefix}/{resident.property_id}/residents/{resident.id}/{kind}/{filename}"
+        blob = bucket.blob(object_name)
+        content_type = getattr(file_obj, 'content_type', None)
+        blob.upload_from_file(file_obj, content_type=content_type)
+        # Public URL (requires bucket/object to be publicly readable or signed serving on your side)
+        return f"https://storage.googleapis.com/{bucket_name}/{object_name}"
+
     def get_queryset(self):
         """
         Default: return only active residents (move_out_date is NULL).
@@ -451,6 +473,32 @@ class ResidentViewSet(viewsets.ModelViewSet):
             return qs
         # default: active only
         return qs.filter(is_active=True, move_out_date__isnull=True)
+
+    @extend_schema(description='Create resident and optionally upload photo/aadhar via multipart/form-data (fields: photo, aadhar).')
+    def create(self, request, *args, **kwargs):
+        """Create resident and handle optional file uploads to GCS in one step."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        resident = serializer.save()
+        # Handle optional file uploads
+        photo_file = request.FILES.get('photo')
+        aadhar_file = request.FILES.get('aadhar')
+        updated = False
+        if photo_file:
+            url = self._upload_to_gcs(resident, photo_file, 'photo')
+            if url:
+                resident.photo_url = url
+                updated = True
+        if aadhar_file:
+            url = self._upload_to_gcs(resident, aadhar_file, 'aadhar')
+            if url:
+                resident.aadhar_url = url
+                updated = True
+        if updated:
+            resident.save(update_fields=['photo_url', 'aadhar_url'])
+        out = self.get_serializer(resident)
+        headers = self.get_success_headers(out.data)
+        return Response(out.data, status=status.HTTP_201_CREATED, headers=headers)
 
     @action(detail=False, methods=['get'])
     def due_soon(self, request):
