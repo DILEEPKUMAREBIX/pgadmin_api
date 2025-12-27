@@ -1,4 +1,5 @@
 from rest_framework import viewsets, filters, status, serializers
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.db.models import Q
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -429,6 +430,7 @@ class ResidentViewSet(viewsets.ModelViewSet):
     """
     queryset = Resident.objects.all()
     serializer_class = ResidentSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['property', 'is_active', 'rent_type']
     search_fields = ['first_name', 'last_name', 'email', 'mobile']
@@ -476,34 +478,32 @@ class ResidentViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         description='Create resident and optionally upload photo/aadhar via multipart/form-data (fields: photo, aadhar).',
-        request=OpenApiRequest(
-            content={
-                'multipart/form-data': inline_serializer(
-                    name='ResidentCreateMultipart',
-                    fields={
-                        'property': serializers.IntegerField(),
-                        'first_name': serializers.CharField(),
-                        'last_name': serializers.CharField(required=False, allow_blank=True),
-                        'gender': serializers.CharField(required=False),
-                        'email': serializers.EmailField(required=False, allow_blank=True, allow_null=True),
-                        'mobile': serializers.CharField(required=False, allow_blank=True),
-                        'dob': serializers.DateField(required=False),
-                        'address': serializers.CharField(required=False, allow_blank=True),
-                        'rent': serializers.DecimalField(max_digits=10, decimal_places=2),
-                        'rent_type': serializers.CharField(required=False),
-                        'joining_date': serializers.DateField(),
-                        'preferred_billing_day': serializers.IntegerField(required=False),
-                        'floor_id': serializers.IntegerField(required=True),
-                        'room_id': serializers.IntegerField(required=True),
-                        'bed_id': serializers.IntegerField(required=True),
-                        'notes': serializers.CharField(required=False, allow_blank=True),
-                        'override_comment': serializers.CharField(required=False, allow_blank=True),
-                        'photo': serializers.ImageField(required=False),
-                        'aadhar': serializers.FileField(required=False),
-                    }
-                )
-            }
-        ),
+        request={
+            'multipart/form-data': inline_serializer(
+                name='ResidentCreateMultipart',
+                fields={
+                    'property': serializers.IntegerField(),
+                    'first_name': serializers.CharField(),
+                    'last_name': serializers.CharField(required=False, allow_blank=True),
+                    'gender': serializers.CharField(required=False),
+                    'email': serializers.EmailField(required=False, allow_blank=True, allow_null=True),
+                    'mobile': serializers.CharField(required=False, allow_blank=True),
+                    'dob': serializers.DateField(required=False),
+                    'address': serializers.CharField(required=False, allow_blank=True),
+                    'rent': serializers.DecimalField(max_digits=10, decimal_places=2),
+                    'rent_type': serializers.CharField(required=False),
+                    'joining_date': serializers.DateField(),
+                    'preferred_billing_day': serializers.IntegerField(required=False),
+                    'floor_id': serializers.IntegerField(required=True),
+                    'room_id': serializers.IntegerField(required=True),
+                    'bed_id': serializers.IntegerField(required=True),
+                    'notes': serializers.CharField(required=False, allow_blank=True),
+                    'override_comment': serializers.CharField(required=False, allow_blank=True),
+                    'photo': serializers.ImageField(required=False),
+                    'aadhar': serializers.FileField(required=False),
+                }
+            )
+        },
         responses=ResidentSerializer,
     )
     def create(self, request, *args, **kwargs):
