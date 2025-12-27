@@ -562,7 +562,8 @@ class ResidentViewSet(viewsets.ModelViewSet):
             resp = HttpResponse(data, content_type=content_type)
             resp['Cache-Control'] = 'private, max-age=300'
             # Inline display for common types
-            resp['Content-Disposition'] = f'inline; filename="{object_name.split('/')[-1]}"'
+            filename = object_name.rsplit('/', 1)[-1]
+            resp['Content-Disposition'] = 'inline; filename="%s"' % filename
             return resp
         except Exception as e:
             self.logger.exception('Media proxy error kind=%s resident_id=%s: %s', kind, resident.id, e)
