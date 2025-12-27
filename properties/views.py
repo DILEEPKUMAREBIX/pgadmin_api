@@ -4,12 +4,13 @@ from django.db.models import Q
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiRequest, inline_serializer
+from drf_spectacular.utils import extend_schema, OpenApiParameter, inline_serializer
 from drf_spectacular.types import OpenApiTypes
 from rest_framework.permissions import AllowAny
 from django.contrib.auth.hashers import make_password, check_password
 from core.auth import generate_jwt
 from django.conf import settings
+import logging
 from .serializers import (
     AuthRegisterSerializer, AuthLoginSerializer, AuthTokenResponseSerializer, AuthUserMiniSerializer
 )
@@ -223,38 +224,7 @@ class PropertyViewSet(viewsets.ModelViewSet):
         # Filter beds via room -> floor -> property to avoid cross-property counts
         available_beds = Bed.objects.filter(room__floor__property=property_obj).count()
 
-        # Expenses
-        year_start = today.replace(month=1, day=1)
-        month_start = today.replace(day=1)
-        expenses_year = Expense.objects.filter(property=property_obj, expense_date__date__gte=year_start, expense_date__date__lte=today).aggregate(Sum('amount'))
-        expenses_month = Expense.objects.filter(property=property_obj, expense_date__date__gte=month_start, expense_date__date__lte=today).aggregate(Sum('amount'))
-
-        return Response({
-            'property': {
-                'id': property_obj.id,
-                'name': property_obj.name,
-            },
-            'beds': {
-                'occupied': occupied_beds,
-                'available': available_beds,
-            },
-            'overdue': {
-                'count': len(overdue_residents),
-                'total_amount': round(overdue_total_amount, 2),
-                'residents': overdue_details,
-            },
-            'due_soon': {
-                'count': len(due_soon_residents),
-                'total_amount': round(due_soon_total_amount, 2),
-                'residents': ResidentSerializer(due_soon_residents, many=True).data,
-            },
-            'expenses': {
-                'year_total': float(expenses_year['amount__sum'] or 0),
-                'month_total': float(expenses_month['amount__sum'] or 0),
-            }
-        })
-
-    @extend_schema(
+        @extend_schema(description='Create resident. To upload files, send multipart/form-data with fields photo (image) and aadhar (file). Parser supports multipart.')
         tags=['Finance'],
         description='Financial summary for the last 5 years with monthly income (payments) and expenses. Returns per-year totals and top spending categories.'
     )
@@ -436,27 +406,37 @@ class ResidentViewSet(viewsets.ModelViewSet):
     search_fields = ['first_name', 'last_name', 'email', 'mobile']
     ordering_fields = ['first_name', 'last_name', 'joining_date', 'preferred_billing_day', 'created_at']
     ordering = ['-created_at']
+    logger = logging.getLogger(__name__)
 
     def _upload_to_gcs(self, resident: Resident, file_obj, kind: str):
         """Upload a file object to GCS and return the public URL."""
         bucket_name = settings.GCS_BUCKET
         if not bucket_name or not file_obj:
+            self.logger.warning("GCS upload skipped: bucket=%s file_present=%s kind=%s", bucket_name, bool(file_obj), kind)
             return None
         try:
             from google.cloud import storage
-        except Exception:
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            filename = getattr(file_obj, 'name', None) or f'{kind}.bin'
+            prefix = settings.GCS_UPLOAD_PREFIX or 'properties'
+            object_name = f"{prefix}/{resident.property_id}/residents/{resident.id}/{kind}/{filename}"
+            blob = bucket.blob(object_name)
+            content_type = getattr(file_obj, 'content_type', None)
+            try:
+                # Ensure stream at beginning; google client can rewind too
+                if hasattr(file_obj, 'seek'):
+                    file_obj.seek(0)
+                blob.upload_from_file(getattr(file_obj, 'file', file_obj), content_type=content_type, rewind=True)
+            except Exception as e:
+                self.logger.exception("GCS upload error for kind=%s object=%s: %s", kind, object_name, e)
+                return None
+            url = f"https://storage.googleapis.com/{bucket_name}/{object_name}"
+            self.logger.info("GCS upload success: kind=%s url=%s", kind, url)
+            return url
+        except Exception as e:
+            self.logger.exception("GCS client/bucket error: %s", e)
             return None
-        client = storage.Client()
-        bucket = client.bucket(bucket_name)
-        # Build object path: properties/{property_id}/residents/{resident_id}/{kind}/{filename}
-        filename = getattr(file_obj, 'name', None) or f'{kind}.bin'
-        prefix = settings.GCS_UPLOAD_PREFIX or 'properties'
-        object_name = f"{prefix}/{resident.property_id}/residents/{resident.id}/{kind}/{filename}"
-        blob = bucket.blob(object_name)
-        content_type = getattr(file_obj, 'content_type', None)
-        blob.upload_from_file(file_obj, content_type=content_type)
-        # Public URL (requires bucket/object to be publicly readable or signed serving on your side)
-        return f"https://storage.googleapis.com/{bucket_name}/{object_name}"
 
     def get_queryset(self):
         """
@@ -508,25 +488,33 @@ class ResidentViewSet(viewsets.ModelViewSet):
     )
     def create(self, request, *args, **kwargs):
         """Create resident and handle optional file uploads to GCS in one step."""
+        self.logger.info("Resident create: content_type=%s", getattr(request, 'content_type', None))
+        self.logger.debug("Resident create: data_keys=%s file_keys=%s", list(getattr(request, 'data', {}).keys()), list(getattr(request, 'FILES', {}).keys()))
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        self.logger.info("Resident create: serializer valid for first_name=%s", serializer.validated_data.get('first_name'))
         resident = serializer.save()
+        self.logger.info("Resident create: resident saved id=%s property_id=%s", resident.id, resident.property_id)
         # Handle optional file uploads
         photo_file = request.FILES.get('photo')
         aadhar_file = request.FILES.get('aadhar')
-        updated = False
+        self.logger.info("Resident create: files present photo=%s aadhar=%s", bool(photo_file), bool(aadhar_file))
+        updated_fields = []
         if photo_file:
+            self.logger.info("Resident create: uploading photo name=%s size=%s ctype=%s", getattr(photo_file, 'name', None), getattr(photo_file, 'size', None), getattr(photo_file, 'content_type', None))
             url = self._upload_to_gcs(resident, photo_file, 'photo')
             if url:
                 resident.photo_url = url
-                updated = True
+                updated_fields.append('photo_url')
         if aadhar_file:
+            self.logger.info("Resident create: uploading aadhar name=%s size=%s ctype=%s", getattr(aadhar_file, 'name', None), getattr(aadhar_file, 'size', None), getattr(aadhar_file, 'content_type', None))
             url = self._upload_to_gcs(resident, aadhar_file, 'aadhar')
             if url:
                 resident.aadhar_url = url
-                updated = True
-        if updated:
-            resident.save(update_fields=['photo_url', 'aadhar_url'])
+                updated_fields.append('aadhar_url')
+        if updated_fields:
+            resident.save(update_fields=updated_fields)
+            self.logger.info("Resident create: saved media URLs photo_url=%s aadhar_url=%s", resident.photo_url, resident.aadhar_url)
         out = self.get_serializer(resident)
         headers = self.get_success_headers(out.data)
         return Response(out.data, status=status.HTTP_201_CREATED, headers=headers)
