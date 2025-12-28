@@ -459,9 +459,16 @@ class PropertyOccupancyDetailSerializer(serializers.Serializer):
 # PROPERTY SETUP (REQUEST/RESPONSE) SERIALIZERS
 # ============================================================================
 class PropertySetupRequestSerializer(serializers.Serializer):
-    floors_count = serializers.IntegerField(min_value=1)
-    rooms_per_floor = serializers.IntegerField(min_value=1)
-    beds_per_room = serializers.IntegerField(min_value=1)
+    # Optional property details to set/update
+    name = serializers.CharField(required=False, allow_blank=True)
+    address = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    city = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    state = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    zip_code = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=10)
+    # Defaults (optional). When omitted, use dynamic lists below.
+    floors_count = serializers.IntegerField(min_value=1, required=False)
+    rooms_per_floor = serializers.IntegerField(min_value=1, required=False)
+    beds_per_room = serializers.IntegerField(min_value=1, required=False)
     # Optional naming inputs
     floor_names = serializers.ListField(child=serializers.CharField(), required=False, allow_null=True)
     # Map of floor_level (string or int accepted) -> list of room numbers/names
@@ -472,38 +479,83 @@ class PropertySetupRequestSerializer(serializers.Serializer):
     reset = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
+        # Basic validation for property fields
+        if 'name' in attrs and attrs['name'] is not None and attrs['name'].strip() == '':
+            raise serializers.ValidationError('Property name cannot be empty when provided')
+
         floors = attrs.get('floors_count')
-        rooms = attrs.get('rooms_per_floor')
-        beds = attrs.get('beds_per_room')
+        rooms_default = attrs.get('rooms_per_floor')
+        beds_default = attrs.get('beds_per_room')
         floor_names = attrs.get('floor_names')
         room_numbers = attrs.get('room_numbers') or {}
         bed_numbers = attrs.get('bed_numbers') or {}
 
-        # Validate floor_names length
-        if floor_names:
-            if len(floor_names) != floors:
-                raise serializers.ValidationError('floor_names length must equal floors_count')
-        # Validate room_numbers lengths per floor
+        # Derive floors_count if not provided
+        derived_floors = floors
+        if derived_floors is None:
+            keys = []
+            try:
+                keys = [int(k) for k in room_numbers.keys()]
+            except Exception:
+                raise serializers.ValidationError('room_numbers keys must be integers when floors_count is omitted')
+            if keys:
+                derived_floors = max(keys)
+            elif floor_names:
+                derived_floors = len(floor_names)
+            else:
+                # Try bed_numbers keys
+                try:
+                    bk = [int(k) for k in bed_numbers.keys()]
+                except Exception:
+                    raise serializers.ValidationError('bed_numbers keys must be integers when floors_count is omitted')
+                if bk:
+                    derived_floors = max(bk)
+        if derived_floors is None:
+            raise serializers.ValidationError('Provide floors_count or floor_names/room_numbers/bed_numbers to infer floors')
+        attrs['floors_count'] = derived_floors
+
+        # Floor names length, if provided, should not exceed derived floors
+        if floor_names and len(floor_names) > derived_floors:
+            raise serializers.ValidationError('floor_names length cannot exceed floors_count')
+
+        # Validate room_numbers types per floor
         for k, v in room_numbers.items():
             try:
                 lvl = int(k)
             except Exception:
                 raise serializers.ValidationError('room_numbers keys must be floor levels (int)')
-            if lvl < 1 or lvl > floors:
+            if not isinstance(v, list):
+                raise serializers.ValidationError(f'room_numbers for floor {lvl} must be a list')
+            if lvl < 1 or lvl > derived_floors:
                 raise serializers.ValidationError('room_numbers contains floor outside 1..floors_count')
-            if len(v) != rooms:
-                raise serializers.ValidationError(f'room_numbers for floor {lvl} must have {rooms} entries')
-        # Validate bed_numbers lengths per room
+
+        # Validate bed_numbers structures
         for fk, fv in bed_numbers.items():
             try:
                 lvl = int(fk)
             except Exception:
                 raise serializers.ValidationError('bed_numbers keys must be floor levels (int)')
-            if lvl < 1 or lvl > floors:
+            if not isinstance(fv, dict):
+                raise serializers.ValidationError(f'bed_numbers for floor {lvl} must be a mapping of room_number -> list')
+            if lvl < 1 or lvl > derived_floors:
                 raise serializers.ValidationError('bed_numbers contains floor outside 1..floors_count')
             for rk, rv in fv.items():
-                if len(rv) != beds:
-                    raise serializers.ValidationError(f'bed_numbers for floor {lvl} room {rk} must have {beds} entries')
+                if not isinstance(rv, list):
+                    raise serializers.ValidationError(f'bed_numbers for floor {lvl} room {rk} must be a list')
+
+        # If defaults omitted and no explicit lists provided, fail clearly
+        if rooms_default is None:
+            # Must have at least one floor with explicit room_numbers
+            if not room_numbers:
+                raise serializers.ValidationError('rooms_per_floor missing and room_numbers not provided')
+        if beds_default is None:
+            # Must have some explicit bed_numbers or will use default when provided
+            # It's OK to omit bed_numbers if beds_default exists; otherwise error if none present at all
+            # Check: any floor has bed_numbers?
+            any_beds_lists = any(isinstance(v, dict) and any(isinstance(rv, list) and rv for rv in v.values()) for v in bed_numbers.values())
+            if not any_beds_lists and beds_default is None:
+                raise serializers.ValidationError('beds_per_room missing and bed_numbers not provided')
+
         return attrs
 
 

@@ -5,6 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
+from django.db import IntegrityError
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from rest_framework.permissions import AllowAny
@@ -109,9 +110,21 @@ class PropertyViewSet(viewsets.ModelViewSet):
         input_ser.is_valid(raise_exception=True)
         data = input_ser.validated_data
 
-        floors_count = data['floors_count']
-        rooms_per_floor = data['rooms_per_floor']
-        beds_per_room = data['beds_per_room']
+        # Optionally update property details
+        prop_update_fields = []
+        for fld in ['name', 'address', 'city', 'state', 'zip_code']:
+            if fld in data and data.get(fld) is not None:
+                setattr(property_obj, fld, data.get(fld))
+                prop_update_fields.append(fld)
+        if prop_update_fields:
+            try:
+                property_obj.save(update_fields=prop_update_fields)
+            except IntegrityError:
+                return Response({'detail': 'Property name must be unique.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        floors_count = data.get('floors_count')
+        rooms_per_floor = data.get('rooms_per_floor')  # default when room_numbers absent
+        beds_per_room = data.get('beds_per_room')      # default when bed_numbers absent
         floor_names = data.get('floor_names') or []
         room_numbers_map = data.get('room_numbers') or {}
         bed_numbers_map = data.get('bed_numbers') or {}
@@ -130,8 +143,22 @@ class PropertyViewSet(viewsets.ModelViewSet):
             elif property_obj.floors.exists():
                 return Response({'detail': 'Property already has floors. Pass reset=true to reconfigure.'}, status=status.HTTP_400_BAD_REQUEST)
 
+            # Determine floors to create
+            floor_levels = list(range(1, (floors_count or 0) + 1))
+            if not floor_levels:
+                # Fallback: infer from provided maps
+                keys = set()
+                for k in (room_numbers_map.keys() | bed_numbers_map.keys()):
+                    try:
+                        keys.add(int(k))
+                    except Exception:
+                        pass
+                floor_levels = sorted(keys)
+            if not floor_levels:
+                return Response({'detail': 'No floors defined (provide floors_count or room_numbers/bed_numbers keys).'}, status=status.HTTP_400_BAD_REQUEST)
+
             # Create floors → rooms → beds (+ occupancy)
-            for level in range(1, floors_count + 1):
+            for level in floor_levels:
                 fname = floor_names[level - 1] if level - 1 < len(floor_names) else f'Floor {level}'
                 floor = Floor.objects.create(property=property_obj, floor_level=level, floor_name=fname)
                 created_floors += 1
@@ -139,24 +166,39 @@ class PropertyViewSet(viewsets.ModelViewSet):
                 # Determine room numbers for this floor
                 rn_list = room_numbers_map.get(str(level)) or room_numbers_map.get(level) or []
 
-                for r_idx in range(1, rooms_per_floor + 1):
-                    room_number = rn_list[r_idx - 1] if r_idx - 1 < len(rn_list) else f'{level:02d}{r_idx:02d}'
+                # If explicit room list provided, use it; else fall back to default count
+                if rn_list:
+                    room_iter = [(i + 1, rn_list[i]) for i in range(len(rn_list))]
+                else:
+                    if not rooms_per_floor:
+                        return Response({'detail': f'rooms_per_floor missing and no room_numbers provided for floor {level}.'}, status=status.HTTP_400_BAD_REQUEST)
+                    room_iter = [(r_idx, f'{level:02d}{r_idx:02d}') for r_idx in range(1, rooms_per_floor + 1)]
+
+                bn_floor = bed_numbers_map.get(str(level)) or bed_numbers_map.get(level) or {}
+
+                for r_idx, room_number in room_iter:
+                    # Beds per room: explicit list overrides default
+                    bn_list = bn_floor.get(room_number) or []
+
+                    # Determine bed iteration
+                    if bn_list:
+                        bed_iter = [(i + 1, bn_list[i]) for i in range(len(bn_list))]
+                        bed_count_for_room = len(bn_list)
+                    else:
+                        if not beds_per_room:
+                            return Response({'detail': f'beds_per_room missing and no bed_numbers provided for floor {level} room {room_number}.'}, status=status.HTTP_400_BAD_REQUEST)
+                        bed_iter = [(b_idx, (chr(64 + b_idx) if b_idx <= 26 else str(b_idx))) for b_idx in range(1, beds_per_room + 1)]
+                        bed_count_for_room = beds_per_room
+
                     room = Room.objects.create(
                         floor=floor,
                         property=property_obj,
                         room_number=room_number,
-                        total_beds=beds_per_room,
+                        total_beds=bed_count_for_room,
                     )
                     created_rooms += 1
 
-                    # Determine bed numbers for this room
-                    bn_floor = bed_numbers_map.get(str(level)) or bed_numbers_map.get(level) or {}
-                    bn_list = bn_floor.get(room_number) or []
-
-                    for b_idx in range(1, beds_per_room + 1):
-                        # Default bed numbers to letters A, B, C... or numeric
-                        default_bnum = chr(64 + b_idx) if b_idx <= 26 else str(b_idx)
-                        bed_number = bn_list[b_idx - 1] if b_idx - 1 < len(bn_list) else default_bnum
+                    for b_idx, bed_number in bed_iter:
                         bed = Bed.objects.create(
                             room=room,
                             floor=floor,
@@ -174,6 +216,15 @@ class PropertyViewSet(viewsets.ModelViewSet):
                             bed=bed,
                             is_occupied=False,
                         )
+
+        # Update property numeric fields to reflect configured structure (optional)
+        if floors_count:
+            property_obj.floors_count = floors_count
+        if rooms_per_floor:
+            property_obj.rooms_per_floor = rooms_per_floor
+        if beds_per_room:
+            property_obj.beds_per_room = beds_per_room
+        property_obj.save(update_fields=['floors_count', 'rooms_per_floor', 'beds_per_room'])
 
         out = PropertySetupResponseSerializer({
             'property_id': property_obj.id,
