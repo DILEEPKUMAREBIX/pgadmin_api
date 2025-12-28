@@ -1,5 +1,8 @@
 from rest_framework import serializers
 from django.db.models import Sum, Count
+from django.utils import timezone
+from decimal import Decimal
+import calendar
 from .models import (
     Property, Floor, Room, Bed, Resident, Occupancy, OccupancyHistory,
     Expense, Payment, MaintenanceRequest, User
@@ -80,6 +83,8 @@ class ResidentSerializer(serializers.ModelSerializer):
     current_bed_number = serializers.SerializerMethodField()
     # Payments summary for resident
     payments = serializers.SerializerMethodField()
+    # Computed total due (arrears + expected - paid)
+    due = serializers.SerializerMethodField()
 
     class Meta:
         model = Resident
@@ -91,6 +96,7 @@ class ResidentSerializer(serializers.ModelSerializer):
             'current_room', 'current_room_number', 'current_bed', 'current_bed_number',
             'floor_id', 'room_id', 'bed_id',
             'arrears',
+            'due',
             'payments',
             'notes', 'override_comment', 'is_active', 'created_at', 'updated_at'
         ]
@@ -126,6 +132,70 @@ class ResidentSerializer(serializers.ModelSerializer):
     def get_payments(self, obj):
         qs = Payment.objects.filter(resident=obj).order_by('-payment_date')
         return PaymentSummarySerializer(qs, many=True).data
+
+    def get_due(self, obj):
+        # Base due starts from arrears
+        arrears = Decimal(obj.arrears or 0)
+
+        # For inactive or without joining date, return arrears
+        if not obj.is_active or not obj.joining_date:
+            return str(arrears.quantize(Decimal('0.01')))
+
+        today = timezone.now().date()
+        # Cap calculations at move_out_date if set in the past
+        period_end = today
+        if obj.move_out_date and obj.move_out_date <= today:
+            period_end = obj.move_out_date
+
+        rent = Decimal(obj.rent or 0)
+        expected_total = Decimal(0)
+
+        if obj.rent_type == 'daily':
+            days = (period_end - obj.joining_date).days + 1
+            if days < 0:
+                days = 0
+            expected_total = rent * Decimal(days)
+
+        elif obj.rent_type == 'weekly':
+            days = (period_end - obj.joining_date).days + 1
+            if days < 0:
+                days = 0
+            daily_rate = rent / Decimal(7)
+            expected_total = daily_rate * Decimal(days)
+
+        elif obj.rent_type == 'monthly':
+            # Determine number of months to include
+            jy, jm = obj.joining_date.year, obj.joining_date.month
+            ly = today.year if today.month > 1 else today.year - 1
+            lm = today.month - 1 if today.month > 1 else 12
+            if (jy > ly) or (jy == ly and jm > lm):
+                months_until_last = 0
+            else:
+                months_until_last = (ly - jy) * 12 + (lm - jm) + 1
+
+            # Include current month if billing day has arrived/passed
+            bday = obj.preferred_billing_day or (obj.joining_date.day if obj.joining_date else None)
+            include_current = False
+            if bday:
+                dim = calendar.monthrange(today.year, today.month)[1]
+                target_day_this_month = min(bday, dim)
+                include_current = today >= today.replace(day=target_day_this_month)
+
+            expected_months = months_until_last + (1 if include_current else 0)
+            expected_total = rent * Decimal(expected_months)
+
+        # Sum of all payments made up to period_end
+        paid_total = Decimal(
+            Payment.objects.filter(resident=obj, payment_date__date__lte=period_end)
+            .aggregate(total=Sum('amount'))['total'] or 0
+        )
+
+        pending = expected_total - paid_total
+        if pending < 0:
+            pending = Decimal(0)
+
+        due_total = arrears + pending
+        return str(due_total.quantize(Decimal('0.01')))
 
     def validate(self, attrs):
         # On create, require floor_id, room_id, bed_id; on update, allow missing
