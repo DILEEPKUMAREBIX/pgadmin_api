@@ -172,16 +172,8 @@ class ResidentSerializer(serializers.ModelSerializer):
                 months_until_last = 0
             else:
                 months_until_last = (ly - jy) * 12 + (lm - jm) + 1
-
-            # Include current month if billing day has arrived/passed
-            bday = obj.preferred_billing_day or (obj.joining_date.day if obj.joining_date else None)
-            include_current = False
-            if bday:
-                dim = calendar.monthrange(today.year, today.month)[1]
-                target_day_this_month = min(bday, dim)
-                include_current = today >= today.replace(day=target_day_this_month)
-
-            expected_months = months_until_last + (1 if include_current else 0)
+            # Do NOT include current month in due; only full months up to last month
+            expected_months = months_until_last
             expected_total = rent * Decimal(expected_months)
 
         # Sum of all payments made up to period_end
