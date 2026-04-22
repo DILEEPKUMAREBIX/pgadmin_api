@@ -13,15 +13,31 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ENVIRONMENT = config('ENVIRONMENT', default='development')
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-# For production on Cloud Run
+# For production (Cloud Run, Railway, or custom domains)
 if ENVIRONMENT == 'production':
-    # Allow Cloud Run default domains (regional) and localhost
-    ALLOWED_HOSTS = ['.run.app', 'localhost', '127.0.0.1']
+    # Allow both GCP Cloud Run and Railway domains, plus custom domains
+    ALLOWED_HOSTS = [
+        '.run.app',           # GCP Cloud Run
+        '.up.railway.app',    # Railway
+        'localhost',
+        '127.0.0.1'
+    ]
+    # Add custom domain if provided
+    custom_domain = config('CUSTOM_DOMAIN', default=None)
+    if custom_domain:
+        ALLOWED_HOSTS.append(custom_domain)
 else:
     ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
 # CSRF trusted origins (required for Django 4+ when behind HTTPS)
-CSRF_TRUSTED_ORIGINS = ['https://*.run.app']
+CSRF_TRUSTED_ORIGINS = [
+    'https://*.run.app',       # GCP Cloud Run
+    'https://*.up.railway.app' # Railway
+]
+# Add custom domain if provided
+custom_domain = config('CUSTOM_DOMAIN', default=None)
+if custom_domain:
+    CSRF_TRUSTED_ORIGINS.append(f'https://{custom_domain}')
 
 SECRET_KEY = config('SECRET_KEY', default='dev-key-not-secure')
 
