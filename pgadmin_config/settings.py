@@ -138,24 +138,30 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'Property Management API',
     'VERSION': '1.0.0',
     'CONTACT': {'name': 'Support', 'email': 'support@pgadmin.local'},
-    # Add global Bearer JWT security scheme for all operations
+    # Define security schemes
     'COMPONENTS': {
         'securitySchemes': {
             'bearerAuth': {
                 'type': 'http',
                 'scheme': 'bearer',
                 'bearerFormat': 'JWT',
+                'description': 'JWT Bearer token',
             }
         }
     },
-    # Apply the scheme globally so endpoints require Authorization by default
+    # Apply globally
     'SECURITY': [
         {'bearerAuth': []}
     ],
-    # Keep auth token in Swagger UI between reloads
+    # Swagger UI settings
     'SWAGGER_UI_SETTINGS': {
-        'persistAuthorization': True
+        'persistAuthorization': True,
+        'displayOperationId': True,
     },
+    # Default security for all operations
+    'DEFAULT_SECURITY': [
+        {'bearerAuth': []}
+    ],
 }
 
 # ============================================================================
