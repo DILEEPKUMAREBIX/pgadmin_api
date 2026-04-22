@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from decouple import config, Csv
+import dj_database_url
 
 # ============================================================================
 # BASE DIRECTORY
@@ -160,26 +161,47 @@ SPECTACULAR_SETTINGS = {
 # ============================================================================
 # DATABASE
 # ============================================================================
-_db_host = config('DATABASE_SOCKET', default=None)
-if not _db_host:
-    _db_host = config('DATABASE_HOST', default='localhost')
+# Priority: DATABASE_URL (Railway/Cloud providers) > individual env vars > defaults
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DATABASE_NAME', default='pgadmin_db'),
-        'USER': config('DATABASE_USER', default='postgres'),
-        'PASSWORD': config('DATABASE_PASSWORD', default=''),
-        'HOST': _db_host,
-        'PORT': config('DATABASE_PORT', default='5432'),
-        # Connection pooling settings
-        'CONN_MAX_AGE': 60,
-        'OPTIONS': {
-            'connect_timeout': 10,
-            'options': '-c statement_timeout=30000',
+# Check if DATABASE_URL is provided (Railway, Heroku, etc.)
+database_url = config('DATABASE_URL', default=None)
+
+if database_url:
+    # Parse DATABASE_URL for Railway/Heroku
+    DATABASES = {
+        'default': dj_database_url.config(
+            default=database_url,
+            conn_max_age=60,
+            conn_health_checks=True,
+        )
+    }
+    # Add connection options
+    DATABASES['default']['OPTIONS'] = {
+        'connect_timeout': 10,
+        'options': '-c statement_timeout=30000',
+    }
+else:
+    # Fallback to individual environment variables (local development / GCP)
+    _db_host = config('DATABASE_SOCKET', default=None)
+    if not _db_host:
+        _db_host = config('DATABASE_HOST', default='localhost')
+
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': config('DATABASE_NAME', default='pgadmin_db'),
+            'USER': config('DATABASE_USER', default='postgres'),
+            'PASSWORD': config('DATABASE_PASSWORD', default=''),
+            'HOST': _db_host,
+            'PORT': config('DATABASE_PORT', default='5432'),
+            # Connection pooling settings
+            'CONN_MAX_AGE': 60,
+            'OPTIONS': {
+                'connect_timeout': 10,
+                'options': '-c statement_timeout=30000',
+            }
         }
     }
-}
 
 # ============================================================================
 # STATIC FILES

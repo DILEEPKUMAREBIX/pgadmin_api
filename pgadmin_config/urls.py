@@ -7,9 +7,11 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from properties.views_health import health_check, ready_check
 
 urlpatterns = [
-    # Health checks for Cloud Run
+    # Health checks for Cloud Run / Railway
     path('health/', health_check, name='health'),
     path('ready/', ready_check, name='ready'),
+    path('api/health/', health_check, name='api_health'),
+    path('api/ready/', ready_check, name='api_ready'),
     
     # Admin
     path('admin/', admin.site.urls),
