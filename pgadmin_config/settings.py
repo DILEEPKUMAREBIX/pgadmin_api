@@ -14,11 +14,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ENVIRONMENT = config('ENVIRONMENT', default='development')
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-# For production (Cloud Run, Railway, or custom domains)
+# For production (Railway or custom domains)
 if ENVIRONMENT == 'production':
-    # Allow both GCP Cloud Run and Railway domains, plus custom domains
+    # Allow Railway domains and custom domains
     ALLOWED_HOSTS = [
-        '.run.app',           # GCP Cloud Run
         '.up.railway.app',    # Railway
         'localhost',
         '127.0.0.1'
@@ -32,7 +31,6 @@ else:
 
 # CSRF trusted origins (required for Django 4+ when behind HTTPS)
 CSRF_TRUSTED_ORIGINS = [
-    'https://*.run.app',       # GCP Cloud Run
     'https://*.up.railway.app' # Railway
 ]
 # Add custom domain if provided
@@ -229,13 +227,13 @@ CORS_ALLOWED_ORIGINS = config(
 # SECURITY (Production)
 # ============================================================================
 if ENVIRONMENT == 'production':
-    # Cloud Run terminates TLS at the edge; avoid redirect loops
+    # Railway terminates TLS at the edge; avoid redirect loops
     SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    # Respect proxy headers from Cloud Run/Load Balancer
+    # Respect proxy headers from load balancer
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     USE_X_FORWARDED_HOST = True
 
