@@ -2,6 +2,32 @@ import os
 from pathlib import Path
 from decouple import config, Csv
 import dj_database_url
+import json
+import tempfile
+
+# ============================================================================
+# GCS AUTHENTICATION SETUP
+# ============================================================================
+# If GOOGLE_APPLICATION_CREDENTIALS_JSON is provided, write it to a temp file
+# for the Google Cloud client to use
+gcs_creds_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+if gcs_creds_json:
+    try:
+        # Parse JSON to validate it
+        creds_dict = json.loads(gcs_creds_json)
+        # Write to a temporary file
+        creds_file = tempfile.NamedTemporaryFile(
+            mode='w',
+            suffix='.json',
+            delete=False,
+            dir=tempfile.gettempdir()
+        )
+        json.dump(creds_dict, creds_file)
+        creds_file.close()
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = creds_file.name
+    except Exception as e:
+        print(f"Warning: Failed to setup GCS credentials: {e}")
+
 
 # ============================================================================
 # BASE DIRECTORY
@@ -262,6 +288,7 @@ LOGGING = {
 # Read from environment first, then fall back to decouple config
 GCS_BUCKET = os.environ.get('GCS_BUCKET') or config('GCS_BUCKET', default=None)
 GCS_UPLOAD_PREFIX = os.environ.get('GCS_UPLOAD_PREFIX') or config('GCS_UPLOAD_PREFIX', default='properties')
+GOOGLE_CLOUD_PROJECT = os.environ.get('GOOGLE_CLOUD_PROJECT') or config('GOOGLE_CLOUD_PROJECT', default=None)
 
 # Note: MIDDLEWARE is already defined above with the full stack including
 # SecurityMiddleware, WhiteNoiseMiddleware, SessionMiddleware, CorsMiddleware,
