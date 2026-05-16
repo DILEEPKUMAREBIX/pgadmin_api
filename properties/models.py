@@ -155,6 +155,9 @@ class Resident(models.Model):
     )
     photo_url = models.URLField(null=True, blank=True)
     aadhar_url = models.URLField(null=True, blank=True)
+    # Vehicle information
+    vehicle_2wheeler = models.CharField(max_length=50, null=True, blank=True, help_text='2 Wheeler vehicle registration number')
+    vehicle_4wheeler = models.CharField(max_length=50, null=True, blank=True, help_text='4 Wheeler vehicle registration number')
     # Current location is derived from Occupancy; not stored on Resident
     notes = models.TextField(null=True, blank=True)
     override_comment = models.TextField(null=True, blank=True)
