@@ -124,13 +124,15 @@ def is_overdue(resident: Resident, as_of_date: date = None) -> bool:
     Check if a resident has overdue payments.
     
     For DAILY residents:
-        - Overdue if payment is 1+ days late
+        - NOT overdue on joining day (same day)
+        - OVERDUE if 1+ full days have passed without payment
     
     For WEEKLY residents:
-        - Overdue if payment is 7+ days late (1 week)
+        - NOT overdue within 7 days
+        - OVERDUE if 7+ full days have passed
     
     For MONTHLY residents:
-        - Overdue if any full calendar month has passed since joining
+        - OVERDUE if any full calendar month has passed since joining
         - AND payment hasn't covered that month
     
     Args:
@@ -146,18 +148,21 @@ def is_overdue(resident: Resident, as_of_date: date = None) -> bool:
     due_amount = calculate_due_amount(resident, as_of_date)
     
     if due_amount > 0:
-        # For daily residents, check if any day has passed without payment
+        # For daily residents: overdue only if 1+ full days have passed
+        # Same day joining = NOT overdue, just DUE
         if resident.rent_type == 'daily':
             if not resident.joining_date:
                 return False
             days_since_joining = (as_of_date - resident.joining_date).days
-            return days_since_joining >= 1
+            # Per user requirement: 1-2 days = DUE, 3+ days = OVERDUE
+            return days_since_joining >= 3
         
         # For weekly residents, check if a full week has passed
         elif resident.rent_type == 'weekly':
             if not resident.joining_date:
                 return False
             days_since_joining = (as_of_date - resident.joining_date).days
+            # Overdue if 7+ full days have passed
             return days_since_joining >= 7
         
         # For monthly residents, check if a full month has passed
@@ -172,6 +177,7 @@ def is_overdue(resident: Resident, as_of_date: date = None) -> bool:
             if not resident.joining_date:
                 return False
             days_since_joining = (as_of_date - resident.joining_date).days
+            # Overdue if 14+ full days have passed
             return days_since_joining >= 14
     
     return False

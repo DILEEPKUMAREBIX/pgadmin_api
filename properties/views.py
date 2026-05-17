@@ -292,15 +292,18 @@ class PropertyViewSet(viewsets.ModelViewSet):
         )
 
         overdue_details = []  # Residents with overdue payments
-        due_details = []      # Residents with due payments (not yet overdue but close)
+        due_details = []      # Residents with due or upcoming due payments (not yet overdue)
         overdue_total_amount = Decimal(0)
         due_total_amount = Decimal(0)
 
         for resident in residents:
+            if not resident.is_active or not resident.joining_date:
+                continue
+                
             due_amount = calculate_due_amount(resident, today)
             
+            # Skip residents with no due amount at all
             if due_amount <= 0:
-                # No due amount, continue
                 continue
             
             resident_data = ResidentSerializer(resident).data
@@ -308,55 +311,68 @@ class PropertyViewSet(viewsets.ModelViewSet):
             
             # Check if overdue
             if is_overdue(resident, today):
-                # This is overdue
+                # Overdue: has due amount and payment date has passed
                 overdue_details.append(resident_data)
                 overdue_total_amount += due_amount
             else:
-                # This is due (but not yet overdue)
-                # For DAILY residents: due if 1+ days have passed without payment
+                # Not yet overdue - check if due soon or upcoming
+                # For DAILY residents: due if 0+ days have passed (same day onwards)
                 # For WEEKLY residents: due if approaching end of week
-                # For MONTHLY residents: due soon if payment date approaching
+                # For MONTHLY residents: due if payment date approaching OR has arrears
+                
+                should_add_to_due = False
+                add_due_amount = due_amount if due_amount > 0 else Decimal(0)
                 
                 if resident.rent_type == 'daily':
-                    # For daily: show as DUE if any days have passed
-                    if resident.joining_date:
-                        days_since_joining = (today - resident.joining_date).days
-                        if days_since_joining >= 1:
-                            due_details.append(resident_data)
-                            due_total_amount += due_amount
+                    # Daily: show as DUE if joined today or earlier (any accumulated rent)
+                    if resident.joining_date and resident.joining_date <= today:
+                        should_add_to_due = True
+                        add_due_amount = due_amount
                 
                 elif resident.rent_type == 'weekly':
-                    # For weekly: show as DUE if approaching a week
+                    # Weekly: show as DUE if approaching a week (5+ days in)
                     if resident.joining_date:
                         days_since_joining = (today - resident.joining_date).days
-                        # Show as due if 5-6 days into the week (approaching payment date)
                         week_position = days_since_joining % 7
-                        if week_position >= 5:  # Last 2 days of the week
-                            due_details.append(resident_data)
-                            due_total_amount += due_amount
+                        # Show as due if in last 2 days of week (days 5-6 out of 0-6)
+                        if week_position >= 5:
+                            should_add_to_due = True
+                            add_due_amount = due_amount
                 
                 elif resident.rent_type == 'bi-weekly':
-                    # For bi-weekly: show as DUE if approaching two weeks
+                    # Bi-weekly: show as DUE if approaching payment (11+ days in)
                     if resident.joining_date:
                         days_since_joining = (today - resident.joining_date).days
-                        # Show as due if in last 3 days of bi-weekly period
                         biweek_position = days_since_joining % 14
-                        if biweek_position >= 11:  # Last 3 days of bi-weekly period
-                            due_details.append(resident_data)
-                            due_total_amount += due_amount
+                        # Show as due if in last 3 days of bi-weekly period
+                        if biweek_position >= 11:
+                            should_add_to_due = True
+                            add_due_amount = due_amount
                 
                 elif resident.rent_type == 'monthly':
-                    # For monthly: show as due if within 5 days of billing date
-                    billing_day = resident.preferred_billing_day or (resident.joining_date.day if resident.joining_date else None)
-                    if billing_day:
-                        dim = days_in_month(today.year, today.month)
-                        target_day_this_month = min(billing_day, dim)
-                        this_month_bill = date(today.year, today.month, target_day_this_month)
-                        
-                        delta_days = (this_month_bill - today).days
-                        if -1 <= delta_days <= 5:  # Due soon or just due
-                            due_details.append(resident_data)
-                            due_total_amount += due_amount
+                    # Monthly: show as DUE if:
+                    # 1. Next billing date is approaching (within 5 days), OR
+                    # 2. Has arrears (even if no rent accrued yet)
+                    from .payment_utils import next_billing_date
+                    
+                    has_arrears = Decimal(resident.arrears or 0) > 0
+                    next_bill = next_billing_date(resident, today)
+                    
+                    if next_bill:
+                        delta_days = (next_bill - today).days
+                        # Show if next billing date is within 5 days forward or 1 day past
+                        is_billing_soon = -1 <= delta_days <= 5
+                    else:
+                        is_billing_soon = False
+                    
+                    # Show as DUE if billing is approaching OR has arrears
+                    if is_billing_soon or has_arrears:
+                        should_add_to_due = True
+                        add_due_amount = due_amount
+                
+                if should_add_to_due:
+                    due_details.append(resident_data)
+                    due_total_amount += add_due_amount
 
         # Beds summary
         occupied_beds = Occupancy.objects.filter(property=property_obj, is_occupied=True).count()
