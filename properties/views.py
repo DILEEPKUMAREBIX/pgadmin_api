@@ -27,7 +27,8 @@ from .serializers import (
     ResidentSerializer, OccupancySerializer, OccupancyHistorySerializer,
     ExpenseSerializer, PaymentSerializer, MaintenanceRequestSerializer,
     UserSerializer, PropertyOccupancyDetailSerializer,
-    PropertySetupRequestSerializer, PropertySetupResponseSerializer
+    PropertySetupRequestSerializer, PropertySetupResponseSerializer,
+    ResidentMoveSerializer
 )
 
 
@@ -788,6 +789,87 @@ class ResidentViewSet(viewsets.ModelViewSet):
                 return Response({'detail': 'Invalid end_date format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
+
+    @extend_schema(
+        tags=['Residents'],
+        description='Move a resident to a new bed. This frees the old bed and occupies the new one.',
+        request=ResidentMoveSerializer,
+        responses=ResidentSerializer,
+    )
+    @action(detail=True, methods=['post'], url_path='move')
+    def move(self, request, pk=None):
+        resident = self.get_object()
+        ser = ResidentMoveSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        new_bed_id = ser.validated_data['new_bed_id']
+
+        try:
+            new_bed = Bed.objects.select_related('room', 'floor', 'property').get(id=new_bed_id)
+        except Bed.DoesNotExist:
+            return Response({'detail': 'Invalid new_bed_id.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Ensure the new bed belongs to the same property
+        if new_bed.property_id != resident.property_id:
+            return Response({'detail': 'New bed must belong to the same property as the resident.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            # Check if new bed is already occupied
+            new_occupancy, created = Occupancy.objects.get_or_create(
+                bed=new_bed,
+                defaults={
+                    'property': new_bed.property,
+                    'floor': new_bed.floor,
+                    'room': new_bed.room,
+                    'is_occupied': False
+                }
+            )
+
+            if new_occupancy.is_occupied:
+                return Response({'detail': 'The selected bed is already occupied.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Find current occupancy
+            current_occupancy = Occupancy.objects.filter(resident=resident, is_occupied=True).first()
+            if not current_occupancy:
+                return Response({'detail': 'Resident does not have an active occupancy to move from.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            old_bed = current_occupancy.bed
+
+            # Free the old bed
+            current_occupancy.is_occupied = False
+            current_occupancy.resident = None
+            current_occupancy.save(update_fields=['is_occupied', 'resident', 'updated_at'])
+
+            # Occupy the new bed
+            from django.utils import timezone
+            new_occupancy.is_occupied = True
+            new_occupancy.resident = resident
+            new_occupancy.occupied_since = timezone.now().date()
+            new_occupancy.save(update_fields=['is_occupied', 'resident', 'occupied_since', 'updated_at'])
+
+            # Log history
+            OccupancyHistory.objects.create(
+                property=resident.property,
+                floor=old_bed.floor,
+                room=old_bed.room,
+                bed=old_bed,
+                resident=resident,
+                action='freed',
+                notes=f'Moved to Room {new_bed.room.room_number}, Bed {new_bed.bed_number}'
+            )
+
+            OccupancyHistory.objects.create(
+                property=resident.property,
+                floor=new_bed.floor,
+                room=new_bed.room,
+                bed=new_bed,
+                resident=resident,
+                action='occupied',
+                notes=f'Moved from Room {old_bed.room.room_number}, Bed {old_bed.bed_number}'
+            )
+
+        # Refresh resident and return
+        resident.refresh_from_db()
+        return Response(self.get_serializer(resident).data)
 
 
 @extend_schema(tags=['Occupancy'])
