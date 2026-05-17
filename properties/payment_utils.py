@@ -66,7 +66,8 @@ def calculate_due_amount(resident: Resident, as_of_date: date = None) -> Decimal
     expected_total = Decimal(0)
     
     if resident.rent_type == 'daily':
-        # All days from joining to period_end, inclusive
+        # Count all days from joining date to today (inclusive)
+        # Joining day counts as day 1, so April 24 to May 17 = 24 days
         days = (period_end - resident.joining_date).days + 1
         if days < 0:
             days = 0
@@ -190,7 +191,7 @@ def get_overdue_amount(resident: Resident, as_of_date: date = None) -> Decimal:
     This is the portion of due_amount that is actually overdue (not due soon).
     
     For DAILY residents:
-        - Days overdue × daily_rent
+        - Days overdue × daily_rent (counts only days where payment was due and not made)
     
     For WEEKLY residents:
         - Amounts from weeks that have fully passed
@@ -214,11 +215,12 @@ def get_overdue_amount(resident: Resident, as_of_date: date = None) -> Decimal:
     rent = Decimal(resident.rent or 0)
     
     if resident.rent_type == 'daily':
-        # Calculate rent for completed days (days that are in the past)
-        days_in_past = (as_of_date - resident.joining_date).days
-        if days_in_past <= 0:
+        # Calculate rent for all days from joining to today (inclusive)
+        # Same logic as calculate_due_amount for consistency
+        days = (as_of_date - resident.joining_date).days + 1
+        if days <= 0:
             return Decimal(0)
-        expected = rent * Decimal(days_in_past)
+        expected = rent * Decimal(days)
     
     elif resident.rent_type == 'weekly':
         days = (as_of_date - resident.joining_date).days
