@@ -301,7 +301,7 @@ def get_days_overdue(resident: Resident, as_of_date: date = None) -> int:
             return 0
         return days_passed - 6  # Subtract the first 7 days (day 1-7)
     
-    elif resident.rent_type == 'month':
+    elif resident.rent_type == 'monthly':
         # Overdue after a full month
         if days_passed < 30:
             return 0

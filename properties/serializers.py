@@ -85,6 +85,12 @@ class ResidentSerializer(serializers.ModelSerializer):
     payments = serializers.SerializerMethodField()
     # Computed total due (arrears + expected - paid)
     due = serializers.SerializerMethodField()
+    # New payment status fields
+    is_overdue = serializers.SerializerMethodField()
+    overdue_amount = serializers.SerializerMethodField()
+    next_payment_date = serializers.SerializerMethodField()
+    days_overdue = serializers.SerializerMethodField()
+    payment_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Resident
@@ -98,6 +104,7 @@ class ResidentSerializer(serializers.ModelSerializer):
             'floor_id', 'room_id', 'bed_id',
             'arrears',
             'due',
+            'is_overdue', 'overdue_amount', 'next_payment_date', 'days_overdue', 'payment_status',
             'payments',
             'notes', 'override_comment', 'is_active', 'created_at', 'updated_at'
         ]
@@ -139,6 +146,56 @@ class ResidentSerializer(serializers.ModelSerializer):
         from .payment_utils import calculate_due_amount
         due_amount = calculate_due_amount(obj)
         return str(due_amount.quantize(Decimal('0.01')))
+
+    def get_is_overdue(self, obj):
+        """Check if resident is overdue."""
+        from .payment_utils import is_overdue as check_overdue
+        return check_overdue(obj)
+
+    def get_overdue_amount(self, obj):
+        """Get only the overdue portion of due amount."""
+        from .payment_utils import get_overdue_amount as get_overdue
+        overdue = get_overdue(obj)
+        return str(overdue.quantize(Decimal('0.01')))
+
+    def get_next_payment_date(self, obj):
+        """Get next payment/billing date for resident."""
+        from .payment_utils import next_billing_date
+        if not obj.joining_date:
+            return None
+        next_date = next_billing_date(obj)
+        return next_date.isoformat() if next_date else None
+
+    def get_days_overdue(self, obj):
+        """Get number of days resident is overdue."""
+        from .payment_utils import get_days_overdue as get_days
+        return get_days(obj)
+
+    def get_payment_status(self, obj):
+        """
+        Get human-readable payment status.
+        
+        Returns one of:
+        - 'ON_TIME': No due amount
+        - 'DUE_SOON': Has due but not yet overdue
+        - 'OVERDUE': Payment past due (1-2 days for daily, 7+ for weekly, etc.)
+        - 'SEVERELY_OVERDUE': Very late (3+ days for daily, 14+ for weekly, etc.)
+        """
+        from .payment_utils import calculate_due_amount, is_overdue as check_overdue, get_days_overdue as get_days
+        from decimal import Decimal
+        
+        due_amount = calculate_due_amount(obj)
+        
+        if due_amount <= 0:
+            return 'ON_TIME'
+        
+        if check_overdue(obj):
+            days_over = get_days(obj)
+            if days_over > 30:  # More than a month overdue
+                return 'SEVERELY_OVERDUE'
+            return 'OVERDUE'
+        
+        return 'DUE_SOON'
 
     def validate(self, attrs):
         # On create, require floor_id, room_id, bed_id; on update, allow missing
