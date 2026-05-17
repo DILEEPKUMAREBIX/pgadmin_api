@@ -47,9 +47,77 @@ class RoomSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'floor', 'floor_name', 'property', 'property_name',
             'room_number', 'room_name', 'total_beds', 'room_type',
-            'capacity', 'description', 'is_active', 'created_at', 'updated_at'
+            'capacity', 'description', 'is_active', 'is_ac', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def validate_total_beds(self, value):
+        if self.instance:
+            occupied_count = Occupancy.objects.filter(room=self.instance, is_occupied=True).count()
+            if value < occupied_count:
+                diff = occupied_count - value
+                room_identifier = self.instance.room_number
+                # Exactly matching the user's expected phrasing
+                raise serializers.ValidationError(
+                    f"Room {room_identifier} currently has {occupied_count} residents. You must move {diff} resident{'s' if diff > 1 else ''} to another room before reducing the capacity to {value}."
+                )
+        return value
+
+    def update(self, instance, validated_data):
+        from django.db import transaction
+        new_total_beds = validated_data.get('total_beds', instance.total_beds)
+        old_total_beds = instance.total_beds
+
+        with transaction.atomic():
+            instance = super().update(instance, validated_data)
+
+            if new_total_beds < old_total_beds:
+                # Delete empty beds starting from the "highest" bed_number
+                beds_to_delete_count = old_total_beds - new_total_beds
+                empty_beds = list(Bed.objects.filter(room=instance, occupancy__is_occupied=False).order_by('-bed_number'))
+                
+                if len(empty_beds) >= beds_to_delete_count:
+                    for bed in empty_beds[:beds_to_delete_count]:
+                        bed.delete()
+            elif new_total_beds > old_total_beds:
+                # Create new beds
+                beds_to_create = new_total_beds - old_total_beds
+                existing_beds = Bed.objects.filter(room=instance).order_by('bed_number')
+                
+                highest_idx = 0
+                for b in existing_beds:
+                    if b.bed_number.isalpha() and len(b.bed_number) == 1:
+                        idx = ord(b.bed_number.upper()) - 64
+                        if idx > highest_idx:
+                            highest_idx = idx
+                    elif b.bed_number.isdigit():
+                        idx = int(b.bed_number)
+                        if idx > highest_idx:
+                            highest_idx = idx
+                
+                if highest_idx == 0:
+                    highest_idx = old_total_beds
+
+                for i in range(1, beds_to_create + 1):
+                    new_idx = highest_idx + i
+                    bed_number = chr(64 + new_idx) if new_idx <= 26 else str(new_idx)
+                    
+                    new_bed = Bed.objects.create(
+                        room=instance,
+                        floor=instance.floor,
+                        property=instance.property,
+                        bed_number=bed_number,
+                        bed_name=bed_number
+                    )
+                    Occupancy.objects.create(
+                        property=instance.property,
+                        floor=instance.floor,
+                        room=instance,
+                        bed=new_bed,
+                        is_occupied=False
+                    )
+
+        return instance
 
 
 class BedSerializer(serializers.ModelSerializer):
@@ -252,6 +320,9 @@ class ResidentSerializer(serializers.ModelSerializer):
             )
         return resident
 
+
+class ResidentMoveSerializer(serializers.Serializer):
+    new_bed_id = serializers.IntegerField(required=True)
 
 class OccupancySerializer(serializers.ModelSerializer):
     property_name = serializers.CharField(source='property.name', read_only=True)
