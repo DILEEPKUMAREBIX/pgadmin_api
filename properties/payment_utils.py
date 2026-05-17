@@ -110,13 +110,11 @@ def calculate_due_amount(resident: Resident, as_of_date: date = None) -> Decimal
         ).aggregate(total=Sum('amount'))['total'] or 0
     )
     
-    # Calculate pending amount
-    pending = expected_total - paid_total
-    if pending < 0:
-        pending = Decimal(0)
+    # Calculate total due
+    due_total = expected_total + arrears - paid_total
+    if due_total < 0:
+        due_total = Decimal(0)
     
-    # Total due = arrears + pending
-    due_total = arrears + pending
     return due_total
 
 
