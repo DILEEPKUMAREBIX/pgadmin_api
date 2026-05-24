@@ -19,6 +19,224 @@ def get_days_in_month(year: int, month: int) -> int:
     return calendar.monthrange(year, month)[1]
 
 
+def _add_months_keep_day(base_date: date, months: int) -> date:
+    """Add months to a date while clamping day to the target month's max day."""
+    month_index = (base_date.month - 1) + months
+    year = base_date.year + (month_index // 12)
+    month = (month_index % 12) + 1
+    day = min(base_date.day, get_days_in_month(year, month))
+    return date(year, month, day)
+
+
+def _count_monthly_cycles_started(joining_date: date, period_end: date) -> int:
+    """Count started monthly billing cycles between joining_date and period_end (inclusive)."""
+    if period_end < joining_date:
+        return 0
+
+    cycles = 1
+    cycle_start = joining_date
+    while True:
+        next_cycle_start = _add_months_keep_day(cycle_start, 1)
+        if next_cycle_start <= period_end:
+            cycles += 1
+            cycle_start = next_cycle_start
+            continue
+        break
+
+    return cycles
+
+
+def calculate_checkout_breakdown(
+    resident: Resident,
+    as_of_date: date = None,
+    monthly_option: str = 'rounded_month',
+) -> dict:
+    """
+    Build a detailed due breakdown for resident checkout.
+
+    Formula used:
+    - MONTHLY: (number_of_monthly_cycles_started * monthly_rent) + arrears - payments_till_checkout
+    - DAILY: (days_stayed * daily_rent) + arrears - payments_till_checkout
+    - WEEKLY: ((days_stayed / 7) * weekly_rent) + arrears - payments_till_checkout
+    - BI-WEEKLY: ((days_stayed / 14) * bi_weekly_rent) + arrears - payments_till_checkout
+    """
+    if as_of_date is None:
+        as_of_date = timezone.now().date()
+
+    arrears = Decimal(resident.arrears or 0)
+    rent = Decimal(resident.rent or 0)
+    joining_date = resident.joining_date
+
+    period_end = as_of_date
+    if resident.move_out_date and resident.move_out_date < period_end:
+        period_end = resident.move_out_date
+
+    payments_qs = Payment.objects.filter(
+        resident=resident,
+        payment_date__date__lte=period_end
+    ).order_by('payment_date')
+    paid_total = Decimal(payments_qs.aggregate(total=Sum('amount'))['total'] or 0)
+
+    expected_rent = Decimal(0)
+    period_count = 0
+    period_type = resident.rent_type
+    daily_rate = None
+
+    if joining_date and period_end >= joining_date:
+        days_stayed = (period_end - joining_date).days + 1
+    else:
+        days_stayed = 0
+
+    monthly_options = None
+
+    if period_type == 'monthly':
+        months_started = _count_monthly_cycles_started(joining_date, period_end) if joining_date else 0
+        full_months_completed = max(0, months_started - 1)
+
+        if joining_date and period_end >= joining_date:
+            current_cycle_start = _add_months_keep_day(joining_date, full_months_completed)
+            extra_days = (period_end - current_cycle_start).days + 1
+            if extra_days < 0:
+                extra_days = 0
+        else:
+            extra_days = 0
+
+        daily_rate = rent / Decimal(30) if rent else Decimal(0)
+
+        expected_rent_rounded = rent * Decimal(months_started)
+        expected_rent_prorated = (rent * Decimal(full_months_completed)) + (daily_rate * Decimal(extra_days))
+
+        due_rounded = expected_rent_rounded + arrears - paid_total
+        if due_rounded < 0:
+            due_rounded = Decimal(0)
+
+        due_prorated = expected_rent_prorated + arrears - paid_total
+        if due_prorated < 0:
+            due_prorated = Decimal(0)
+
+        monthly_options = {
+            'rounded_month': {
+                'label': 'Consider started month as full month',
+                'expected_rent': str(expected_rent_rounded.quantize(Decimal('0.01'))),
+                'remaining_due': str(due_rounded.quantize(Decimal('0.01'))),
+                'formula': 'expected_rent = monthly_cycles_started * monthly_rent',
+                'formula_values': {
+                    'monthly_cycles_started': months_started,
+                    'monthly_rent': str(rent.quantize(Decimal('0.01'))),
+                },
+            },
+            'prorated_days': {
+                'label': 'Full months + extra days by day charge',
+                'expected_rent': str(expected_rent_prorated.quantize(Decimal('0.01'))),
+                'remaining_due': str(due_prorated.quantize(Decimal('0.01'))),
+                'formula': 'expected_rent = (full_months_completed * monthly_rent) + (extra_days * (monthly_rent / 30))',
+                'formula_values': {
+                    'full_months_completed': full_months_completed,
+                    'extra_days': extra_days,
+                    'monthly_rent': str(rent.quantize(Decimal('0.01'))),
+                    'daily_rate': str(daily_rate.quantize(Decimal('0.01'))),
+                },
+            },
+        }
+
+        if monthly_option == 'prorated_days':
+            expected_rent = expected_rent_prorated
+            due_amount = due_prorated
+            formula = monthly_options['prorated_days']['formula']
+            formula_values = monthly_options['prorated_days']['formula_values']
+            period_count = full_months_completed
+        else:
+            expected_rent = expected_rent_rounded
+            due_amount = due_rounded
+            formula = monthly_options['rounded_month']['formula']
+            formula_values = monthly_options['rounded_month']['formula_values']
+            period_count = months_started
+    elif period_type == 'daily':
+        period_count = days_stayed
+        expected_rent = rent * Decimal(days_stayed)
+        formula = 'expected_rent = days_stayed * daily_rent'
+        formula_values = {
+            'days_stayed': days_stayed,
+            'daily_rent': str(rent.quantize(Decimal('0.01'))),
+        }
+    elif period_type == 'weekly':
+        period_count = days_stayed
+        daily_rate = rent / Decimal(7) if rent else Decimal(0)
+        expected_rent = daily_rate * Decimal(days_stayed)
+        formula = 'expected_rent = (days_stayed / 7) * weekly_rent'
+        formula_values = {
+            'days_stayed': days_stayed,
+            'weekly_rent': str(rent.quantize(Decimal('0.01'))),
+            'daily_rate': str(daily_rate.quantize(Decimal('0.01'))),
+        }
+    elif period_type == 'bi-weekly':
+        period_count = days_stayed
+        daily_rate = rent / Decimal(14) if rent else Decimal(0)
+        expected_rent = daily_rate * Decimal(days_stayed)
+        formula = 'expected_rent = (days_stayed / 14) * bi_weekly_rent'
+        formula_values = {
+            'days_stayed': days_stayed,
+            'bi_weekly_rent': str(rent.quantize(Decimal('0.01'))),
+            'daily_rate': str(daily_rate.quantize(Decimal('0.01'))),
+        }
+    else:
+        formula = 'Unsupported rent_type; expected_rent set to 0.'
+        formula_values = {}
+
+    if period_type != 'monthly':
+        raw_due = expected_rent + arrears - paid_total
+        due_amount = raw_due if raw_due > 0 else Decimal(0)
+    else:
+        raw_due = expected_rent + arrears - paid_total
+
+    explanation = [
+        f"Rent type: {resident.rent_type}",
+        f"Expected rent till {period_end.isoformat()} calculated using: {formula}",
+        f"Total due = expected_rent ({expected_rent.quantize(Decimal('0.01'))}) + arrears ({arrears.quantize(Decimal('0.01'))}) - payments ({paid_total.quantize(Decimal('0.01'))})",
+    ]
+    if raw_due <= 0:
+        explanation.append('Resident has no pending due after payments adjustment.')
+
+    payment_breakdown = [
+        {
+            'id': payment.id,
+            'amount': str(Decimal(payment.amount).quantize(Decimal('0.01'))),
+            'payment_date': payment.payment_date.isoformat(),
+            'payment_method': payment.payment_method,
+            'reference_number': payment.reference_number,
+        }
+        for payment in payments_qs
+    ]
+
+    if period_type == 'monthly':
+        explanation.append(
+            'Monthly checkout options are provided. UI can choose rounded_month or prorated_days for final settlement.'
+        )
+
+    return {
+        'resident_id': resident.id,
+        'resident_name': resident.name,
+        'rent_type': resident.rent_type,
+        'joining_date': joining_date.isoformat() if joining_date else None,
+        'checkout_date': as_of_date.isoformat(),
+        'calculation_period_end': period_end.isoformat(),
+        'days_stayed': days_stayed,
+        'period_count': period_count,
+        'rent_per_period': str(rent.quantize(Decimal('0.01'))),
+        'expected_rent': str(expected_rent.quantize(Decimal('0.01'))),
+        'arrears': str(arrears.quantize(Decimal('0.01'))),
+        'payments_till_checkout': str(paid_total.quantize(Decimal('0.01'))),
+        'remaining_due': str(due_amount.quantize(Decimal('0.01'))),
+        'applied_monthly_option': monthly_option if period_type == 'monthly' else None,
+        'monthly_checkout_options': monthly_options,
+        'formula': formula,
+        'formula_values': formula_values,
+        'explanation': explanation,
+        'payment_count': payments_qs.count(),
+        'payments': payment_breakdown,
+    }
+
+
 def calculate_due_amount(resident: Resident, as_of_date: date = None) -> Decimal:
     """
     Calculate the total due amount for a resident as of a given date.

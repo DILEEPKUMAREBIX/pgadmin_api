@@ -759,6 +759,56 @@ class ResidentViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         tags=['Residents'],
+        description='Checkout due summary for a resident. Includes detailed formula and payment breakdown used to compute remaining due.',
+        parameters=[
+            OpenApiParameter(
+                name='checkout_date',
+                description='Optional checkout date in YYYY-MM-DD. Defaults to today.',
+                required=False,
+                type=OpenApiTypes.STR,
+            ),
+            OpenApiParameter(
+                name='monthly_option',
+                description='Monthly checkout strategy: rounded_month (default) or prorated_days.',
+                required=False,
+                type=OpenApiTypes.STR,
+            ),
+        ],
+        responses={200: OpenApiTypes.OBJECT},
+    )
+    @action(detail=True, methods=['get'], url_path='checkout')
+    def checkout(self, request, pk=None):
+        """Calculate resident checkout settlement with transparent due breakdown."""
+        from datetime import datetime
+        from django.utils import timezone
+        from .payment_utils import calculate_checkout_breakdown
+
+        resident = self.get_object()
+        checkout_date_str = request.query_params.get('checkout_date')
+        monthly_option = (request.query_params.get('monthly_option') or 'rounded_month').strip().lower()
+
+        if monthly_option not in ('rounded_month', 'prorated_days'):
+            return Response(
+                {'detail': 'Invalid monthly_option. Use rounded_month or prorated_days.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if checkout_date_str:
+            try:
+                checkout_date = datetime.strptime(checkout_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response(
+                    {'detail': 'Invalid checkout_date format. Use YYYY-MM-DD.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            checkout_date = timezone.now().date()
+
+        data = calculate_checkout_breakdown(resident, checkout_date, monthly_option=monthly_option)
+        return Response(data)
+
+    @extend_schema(
+        tags=['Residents'],
         description='Get historical residents (move_out_date set). Optional filters: property, start_date, end_date (YYYY-MM-DD).',
         parameters=[
             OpenApiParameter(name='property', description='Property ID', required=False, type=OpenApiTypes.INT),
